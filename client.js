@@ -173,6 +173,8 @@ window.__ModuleLoader__.load({
         running: '正在生成…',
         failedUnread: '轮次失败 · 未查看',
         doneUnread: '已完成 · 未查看',
+        drafted: '草稿未发送',
+        draftPrefix: '草稿：',
         open: '打开会话',
         ack: '标记已读',
         snooze: '忽略 1 小时',
@@ -213,6 +215,8 @@ window.__ModuleLoader__.load({
         running: 'Generating…',
         failedUnread: 'Turn failed · unread',
         doneUnread: 'Done · unread',
+        drafted: 'Draft not sent',
+        draftPrefix: 'Draft: ',
         open: 'Open session',
         ack: 'Mark as read',
         snooze: 'Snooze 1 hour',
@@ -248,7 +252,7 @@ window.__ModuleLoader__.load({
     /* ---- Pure derivation (framework-free; covered by test/derive.test.mjs) ---- */
 
     /** Bucket order: who needs the user first. */
-    const KIND_RANK = Object.freeze({ waiting: 0, running: 1, failed: 2, done: 3 });
+    const KIND_RANK = Object.freeze({ waiting: 0, running: 1, drafted: 2, failed: 3, done: 4 });
 
     /** Status value used when a Session has no status entry yet. */
     const EMPTY_STATUS = Object.freeze({ running: undefined, pendingInteraction: undefined, completionUnread: false });
@@ -307,14 +311,106 @@ window.__ModuleLoader__.load({
     const STALE_TURN_MS = 120000;
 
     /**
+     * The composer keeps every Session's unsent text in localStorage under
+     * `dsh.conversation.<sessionId>` (`{ draft: { text, references }, view, … }`,
+     * `dsh-client-ui-conversation` `CONVERSATION_STORE_KEY`). The draft is thus
+     * already on disk in this browser — no Host round-trip and no storage of
+     * our own is needed to find it.
+     */
+    const DRAFT_KEY_PREFIX = 'dsh.conversation.';
+
+    /** Longest excerpt of a draft shown as a row subtitle. */
+    const DRAFT_SNIPPET_MAX = 48;
+
+    /**
+     * Flatten a stored draft into one line of readable text.
+     * @param value - a stored draft (`{ text, references }`, or a bare string).
+     * @returns the collapsed excerpt, or `null` when there is nothing unsent.
+     */
+    function draftSnippetOf(value) {
+      const text = typeof value === 'string' ? value : typeof value?.text === 'string' ? value.text : '';
+      const references = Array.isArray(value?.references) ? value.references : [];
+      const collapsed = text.replace(/\s+/gu, ' ').trim();
+      if (collapsed === '') {
+        /* A draft can be references only: an `@file` picked from the picker
+           with nothing typed after it. */
+        if (references.length === 0) return null;
+        return `@${String(references[0] ?? '')}`;
+      }
+      return collapsed.length <= DRAFT_SNIPPET_MAX ? collapsed : `${collapsed.slice(0, DRAFT_SNIPPET_MAX)}…`;
+    }
+
+    /**
+     * Collect the unsent drafts this browser holds.
+     * @param storage - Storage-like object (`window.localStorage`).
+     * @param prefix - key prefix owned by the composer.
+     * @param previous - memo of the last scan (`Map<key, { raw, snippet }>`).
+     * @returns `{ drafts, memo }`: `drafts` maps sessionId -> snippet.
+     */
+    function collectDrafts(storage, prefix = DRAFT_KEY_PREFIX, previous = new Map()) {
+      const drafts = {};
+      const memo = new Map();
+      if (storage === null || storage === undefined || typeof storage.length !== 'number') {
+        return { drafts, memo };
+      }
+      for (let index = 0; index < storage.length; index += 1) {
+        let key = null;
+        try {
+          key = typeof storage.key === 'function' ? storage.key(index) : null;
+        } catch {
+          continue;
+        }
+        if (typeof key !== 'string' || !key.startsWith(prefix)) continue;
+        let raw = null;
+        try {
+          raw = storage.getItem(key);
+        } catch {
+          continue;
+        }
+        if (typeof raw !== 'string') continue;
+        const cached = previous.get(key);
+        let snippet;
+        if (cached !== undefined && cached.raw === raw) {
+          snippet = cached.snippet;
+        } else {
+          try {
+            snippet = draftSnippetOf(JSON.parse(raw)?.draft);
+          } catch {
+            snippet = null;
+          }
+        }
+        memo.set(key, { raw, snippet });
+        if (snippet !== null) drafts[key.slice(prefix.length)] = snippet;
+      }
+      return { drafts, memo };
+    }
+
+    /**
+     * @param left - one draft map.
+     * @param right - another draft map.
+     * @returns true when both hold the same sessionIds and snippets.
+     */
+    function sameDrafts(left, right) {
+      const leftKeys = Object.keys(left ?? {});
+      if (leftKeys.length !== Object.keys(right ?? {}).length) return false;
+      for (const key of leftKeys) {
+        if (left[key] !== right?.[key]) return false;
+      }
+      return true;
+    }
+
+    /**
      * Derive the visible rows of the "正在活跃" group.
      *
      * One Session appears at most once, in its highest-precedence bucket:
-     * waiting > running > failed-unread > done-unread. Finished buckets are
-     * filtered by the turn-sequence ack (and by the local snooze window);
-     * waiting/running are never hidden — they are live states, not notices.
+     * waiting > running > drafted > failed-unread > done-unread. Finished
+     * buckets are filtered by the turn-sequence ack (and by the local snooze
+     * window); waiting/running are never hidden — they are live states, not
+     * notices. A draft is not a notice either, but it is the user's own
+     * unfinished work, so it ranks above the two "come back and review" buckets.
      *
-     * @param input - `{ list, statuses, workspaces, acked, ackedReady, hidden, snooze, now }`.
+     * @param input - `{ list, statuses, workspaces, acked, ackedReady, drafts,
+     *   openSessionId, hidden, snooze, now }`.
      * @returns rows sorted by bucket, then newest first.
      */
     function deriveActiveRows(input) {
@@ -325,9 +421,13 @@ window.__ModuleLoader__.load({
       const workspaces = input?.workspaces;
       const statuses = input?.statuses;
       const acked = input?.acked ?? {};
+      const drafts = input?.drafts ?? {};
       const hidden = input?.hidden ?? {};
       const snooze = input?.snooze ?? {};
       const now = Number(input?.now) || 0;
+      /* The Session on screen is already in front of the user: listing its own
+         draft would just echo what the composer shows. */
+      const openSessionId = typeof input?.openSessionId === 'string' ? input.openSessionId : null;
       /* Until the Host answers with its ack map, "unread" is unknowable. Showing
          the optimistic default would list every finished Session in the store. */
       const ackedReady = input?.ackedReady !== false;
@@ -365,19 +465,22 @@ window.__ModuleLoader__.load({
 
         let kind = null;
         let pendingKind;
+        /* A turn the Host abandoned mid-flight is neither running nor finished;
+           it is listed nowhere rather than invented as a result — but a draft
+           the user left in that Session is still their own pending work. */
+        let abandonedTurn = false;
         if (status.pendingInteraction !== undefined && status.pendingInteraction !== null) {
           kind = 'waiting';
           pendingKind = status.pendingInteraction.kind;
         } else if (running) {
           kind = 'running';
         } else if (view !== undefined && view.lastTurn === 'running') {
-          /* The log is ahead of the UI status: the turn is still open. Bounded
-             by recency, because a turn abandoned by a dead Host never closes --
-             and an abandoned turn is neither running nor finished, so it is
-             listed nowhere rather than invented as a result. */
           if (now - Number(row.updatedAt ?? 0) < STALE_TURN_MS) kind = 'running';
-          else continue;
-        } else {
+          else abandonedTurn = true;
+        }
+        const draftSnippet = kind === null && id !== openSessionId ? drafts[id] : undefined;
+        if (kind === null && typeof draftSnippet === 'string' && draftSnippet !== '') kind = 'drafted';
+        if (kind === null && !abandonedTurn) {
           const unreadByTurn = view !== undefined ? lastTurnSeq > ackSeq : status.completionUnread === true;
           /* No projection (Host half missing) -> the only ack we can honour is
              the local one, keyed by the row's updatedAt. */
@@ -395,8 +498,10 @@ window.__ModuleLoader__.load({
              the read side of the line, so it is not listed at all. */
           if (!ackedReady && view !== undefined) continue;
           if (view !== undefined && lastTurnSeq >= 0 && lastTurnSeq <= ackSeq) continue;
-          if (Number(snooze[id] ?? 0) > now) continue;
         }
+        /* Both review notices and drafts honour the local snooze; waiting and
+           running never do — they are live states. */
+        if (kind !== 'waiting' && kind !== 'running' && Number(snooze[id] ?? 0) > now) continue;
 
         rows.push({
           id,
@@ -406,6 +511,7 @@ window.__ModuleLoader__.load({
           workspaceTitle: workspaceOf.get(id)?.title,
           subagents: subagentsRunning.get(id) ?? 0,
           pendingKind,
+          draft: kind === 'drafted' ? draftSnippet : null,
           lastError: typeof view?.lastError === 'string' ? view.lastError : null,
           /* Sequence to write when this row is acknowledged (open / mark read). */
           turnSeq: view !== undefined ? lastTurnSeq : -1,
@@ -414,6 +520,26 @@ window.__ModuleLoader__.load({
 
       rows.sort((left, right) => (KIND_RANK[left.kind] - KIND_RANK[right.kind]) || (right.updatedAt - left.updatedAt));
       return rows;
+    }
+
+    /**
+     * The Session the main view currently retains. The workspace list derives its
+     * row highlight from exactly this (`retainedBy.mainView > 0`), so it is the
+     * host's own notion of "the Session on screen" and it works even when that
+     * row is not rendered (collapsed workspace, narrow sidebar).
+     *
+     * @param list - Session list state (`{ ids, byId }`), possibly undefined.
+     * @returns the retained Session id, or null.
+     */
+    function currentSessionIdOf(list) {
+      const byId = list?.byId;
+      if (byId === null || typeof byId !== 'object') return null;
+      const ids = Array.isArray(list?.ids) ? list.ids : Object.keys(byId);
+      for (const id of ids) {
+        const summary = byId[id];
+        if (summary !== null && typeof summary === 'object' && (summary.retainedBy?.mainView ?? 0) > 0) return id;
+      }
+      return null;
     }
 
     /** Local UI preferences: only what the Host has no opinion about. */
@@ -481,6 +607,21 @@ window.__ModuleLoader__.load({
         return window.getComputedStyle(column).position === 'fixed';
       } catch {
         return false;
+      }
+    }
+
+    /**
+     * @returns the Session the workspace list marks as open, or null. The list
+     *   is the only place that publishes this (`aria-selected` on the row).
+     */
+    function openSessionIdOf() {
+      try {
+        const selected = document.querySelector('[data-row-key^="session:"][aria-selected="true"]');
+        const key = selected === null ? null : selected.getAttribute('data-row-key');
+        if (typeof key !== 'string' || !key.startsWith('session:')) return null;
+        return key.slice('session:'.length);
+      } catch {
+        return null;
       }
     }
 
@@ -718,6 +859,8 @@ window.__ModuleLoader__.load({
       '.dsh-as-dot[data-kind="running"]{background:var(--dsw-alias-state-business-primary,#247bbf);',
       'animation:dshAsPulse 1.4s ease-in-out infinite}',
       '.dsh-as-dot[data-kind="failed"]{background:var(--dsw-alias-state-error-primary,#d33)}',
+      '.dsh-as-dot[data-kind="drafted"]{background:transparent;',
+      'box-shadow:inset 0 0 0 2px var(--dsw-alias-label-secondary,#8b949e)}',
       '.dsh-as-dot[data-kind="done"]{background:var(--dsw-alias-state-success-primary,#2ea043)}',
       '.dsh-as-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;',
       'color:var(--dsw-alias-label-primary,inherit)}',
@@ -967,6 +1110,12 @@ window.__ModuleLoader__.load({
           const [focusedId, setFocusedId] = useState(null);
           const rowRefs = useRef(new Map());
 
+          /* Unsent drafts live in the composer's own localStorage, one key per
+             Session this browser has opened. The scan is memoized on the raw
+             string, so the tick only parses what actually changed. */
+          const [drafts, setDrafts] = useState({});
+          const draftMemo = useRef(new Map());
+
           /* Update channel state. `null` means "not read yet": the chip only
              advertises a version once a check has actually answered. */
           const [updateInfo, setUpdateInfo] = useState(null);
@@ -1031,6 +1180,32 @@ window.__ModuleLoader__.load({
             };
             window.addEventListener('storage', onStorage);
             return () => window.removeEventListener('storage', onStorage);
+          }, []);
+
+          /* Watch the composer's drafts: another tab's `storage` event, a tab
+             coming back to the foreground, and a one-second tick for the edits
+             this tab itself makes (which fire no `storage` event). */
+          useEffect(() => {
+            const scan = () => {
+              const result = collectDrafts(window.localStorage, DRAFT_KEY_PREFIX, draftMemo.current);
+              draftMemo.current = result.memo;
+              setDrafts((previous) => (sameDrafts(previous, result.drafts) ? previous : result.drafts));
+            };
+            scan();
+            const timer = window.setInterval(scan, 1000);
+            const onStorage = (event) => {
+              if (event.key === null || (typeof event.key === 'string' && event.key.startsWith(DRAFT_KEY_PREFIX))) scan();
+            };
+            const onVisibility = () => {
+              if (document.visibilityState === 'visible') scan();
+            };
+            window.addEventListener('storage', onStorage);
+            document.addEventListener('visibilitychange', onVisibility);
+            return () => {
+              window.clearInterval(timer);
+              window.removeEventListener('storage', onStorage);
+              document.removeEventListener('visibilitychange', onVisibility);
+            };
           }, []);
 
           /* Read the update channel once per page load. The Host caches the
@@ -1116,10 +1291,12 @@ window.__ModuleLoader__.load({
             workspaces,
             acked,
             ackedReady,
+            drafts,
+            openSessionId: currentSessionIdOf(list) ?? openSessionIdOf(),
             hidden: prefs.hidden,
             snooze: prefs.snooze,
             now,
-          }), [list, statuses, workspaces, acked, ackedReady, prefs.hidden, prefs.snooze, now]);
+          }), [list, statuses, workspaces, acked, ackedReady, drafts, prefs.hidden, prefs.snooze, now]);
 
           /** Acknowledge rows; the Host is the source of truth for the result. */
           const acknowledge = useCallback((entries) => {
@@ -1214,6 +1391,7 @@ window.__ModuleLoader__.load({
               return key === undefined ? t('waitingUnknown') : t(key);
             }
             if (row.kind === 'running') return t('running');
+            if (row.kind === 'drafted') return t('drafted');
             if (row.kind === 'failed') return t('failedUnread');
             return t('doneUnread');
           };
@@ -1229,6 +1407,11 @@ window.__ModuleLoader__.load({
 
           /** @returns the row's trailing note: workspace name plus time or status. */
           const subtitleOf = (row) => {
+            /* For a draft the text itself is the useful label: it is what lets
+               the user recognise "the one I was writing" at a glance. */
+            if (row.kind === 'drafted') {
+              return `${t('draftPrefix')}${String(row.draft ?? '')}`;
+            }
             const tail = row.kind === 'waiting' ? statusWordOf(row) : relativeOf(row.updatedAt);
             const workspaceTitle = row.workspaceTitle;
             return typeof workspaceTitle === 'string' && workspaceTitle !== '' ? `${workspaceTitle} · ${tail}` : tail;
@@ -1278,7 +1461,7 @@ window.__ModuleLoader__.load({
             }
             if (event.key === 'Enter') {
               event.preventDefault();
-              if (event.shiftKey) acknowledgeRow(rows[index]);
+              if (event.shiftKey && rows[index].kind !== 'drafted') acknowledgeRow(rows[index]);
               else openRow(rows[index]);
               return;
             }
@@ -1411,7 +1594,10 @@ window.__ModuleLoader__.load({
           h('span', { className: 'dsh-as-sub' }, subtitleOf(row)),
           h('span', { className: 'dsh-as-actions' },
             h(IconButton, { glyph: '→', label: t('open'), onClick: () => openRow(row) }),
-            h(IconButton, { glyph: '✓', label: t('ack'), onClick: () => acknowledgeRow(row) }),
+            /* A draft is unfinished work, not an unread notice: there is no
+               turn to acknowledge, and clearing the text is the way it goes. */
+            row.kind === 'drafted' ? null
+              : h(IconButton, { glyph: '✓', label: t('ack'), onClick: () => acknowledgeRow(row) }),
             h(IconButton, { glyph: '⌛', label: t('snooze'), onClick: () => snoozeRow(row) }))));
 
           const listStyle = mode === 'panel'

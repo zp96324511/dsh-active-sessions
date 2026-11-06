@@ -9,6 +9,8 @@
   "running": "Generating…",
   "failedUnread": "Turn failed · unread",
   "doneUnread": "Done · unread",
+  "drafted": "Draft not sent",
+  "draftPrefix": "Draft: ",
   "open": "Open session",
   "ack": "Mark as read",
   "snooze": "Snooze 1 hour",

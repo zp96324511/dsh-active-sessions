@@ -15,6 +15,12 @@ const { classifySpec, compareVersions, createUpdater, createUpdateRoutes, isNewe
 const PROFILE_DIR = join(home, 'profiles', 'web')
 const PACKAGE_VERSION = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version
 
+/** A version strictly newer than the one this checkout builds (fixtures only). */
+const NEWER_VERSION = (() => {
+  const [major, minor] = PACKAGE_VERSION.split('.').map((part) => Number.parseInt(part, 10))
+  return `${major}.${minor + 1}.0`
+})()
+
 function writeProfile(spec = 'https://github.com/zp96324511/dsh-active-sessions/releases/download/v0.2.0/dsh-active-sessions.tgz') {
   mkdirSync(PROFILE_DIR, { recursive: true })
   writeFileSync(join(PROFILE_DIR, 'package.json'), `${JSON.stringify({ name: 'web', dependencies: { 'dsh-active-sessions': spec } }, null, 2)}\n`)
@@ -155,17 +161,17 @@ test('version helpers compare release and prerelease orderings', () => {
 test('check translates a channel document into an upgrade decision', async () => {
   writeProfile()
   writeInstalled(PACKAGE_VERSION)
-  const { updater, fetchImpl } = makeUpdater({ document: channelDocument('0.3.0') })
+  const { updater, fetchImpl } = makeUpdater({ document: channelDocument(NEWER_VERSION) })
 
   const info = await updater.check()
   assert.equal(info.ok, true)
   assert.equal(info.current, PACKAGE_VERSION)
-  assert.equal(info.latest, '0.3.0')
+  assert.equal(info.latest, NEWER_VERSION)
   assert.equal(info.hasUpdate, true)
   assert.equal(info.canUpgrade, true)
   assert.equal(info.compatible, true)
   assert.equal(info.channel.kind, 'manifest')
-  assert.equal(info.installSpec, 'https://example.test/dsh-active-sessions-0.3.0.tgz')
+  assert.equal(info.installSpec, `https://example.test/dsh-active-sessions-${NEWER_VERSION}.tgz`)
   // No hmr service is mounted in this fake context, so a reload needs a restart.
   assert.equal(info.restartRequired, true)
   assert.equal(fetchImpl.calls.length, 1)
@@ -201,7 +207,7 @@ test('a channel error is reported instead of looking up to date', async () => {
 
 test('a local checkout refuses in-place upgrades with a hint', async () => {
   writeProfile('file:../../projects/dsh-active-sessions')
-  const { updater } = makeUpdater({ document: channelDocument('0.3.0') })
+  const { updater } = makeUpdater({ document: channelDocument(NEWER_VERSION) })
 
   const info = await updater.check({ force: true })
   assert.equal(info.ok, false)
@@ -214,26 +220,26 @@ test('upgrade shells out to dsh plugin add and records the job', async () => {
   writeProfile()
   writeInstalled('0.2.0')
   const spawnImpl = fakeSpawn({ exitCode: 0, output: 'added 1 package' })
-  const { updater } = makeUpdater({ document: channelDocument('0.3.0'), spawn: spawnImpl })
+  const { updater } = makeUpdater({ document: channelDocument(NEWER_VERSION), spawn: spawnImpl })
 
   // The installer rewrites the profile dependency, so the next read must match.
   const run = updater.upgrade({})
   await new Promise((resolve) => setImmediate(resolve))
-  writeInstalled('0.3.0')
+  writeInstalled(NEWER_VERSION)
   const result = await run
 
   assert.equal(result.ok, true)
   assert.equal(spawnImpl.calls.length, 1)
   const [call] = spawnImpl.calls
   assert.equal(call.command, process.execPath)
-  assert.deepEqual(call.args.slice(-4), ['--profile', 'web', 'add', 'https://example.test/dsh-active-sessions-0.3.0.tgz'])
+  assert.deepEqual(call.args.slice(-4), ['--profile', 'web', 'add', `https://example.test/dsh-active-sessions-${NEWER_VERSION}.tgz`])
   assert.equal(call.options.cwd, PROFILE_DIR)
   assert.equal(call.options.env.DSH_HOME, home)
   assert.equal(result.restartRequired, true)
 
   const job = updater.jobView()
   assert.equal(job.state, 'done')
-  assert.equal(job.target, '0.3.0')
+  assert.equal(job.target, NEWER_VERSION)
   assert.match(job.lines.join('\n'), /added 1 package/)
 })
 
@@ -241,7 +247,7 @@ test('a second upgrade while one is running is rejected', async () => {
   writeProfile()
   writeInstalled('0.2.0')
   const spawnImpl = fakeSpawn({ autoClose: false })
-  const { updater } = makeUpdater({ document: channelDocument('0.3.0'), spawn: spawnImpl })
+  const { updater } = makeUpdater({ document: channelDocument(NEWER_VERSION), spawn: spawnImpl })
 
   const first = updater.upgrade({})
   await new Promise((resolve) => setImmediate(resolve))
@@ -255,7 +261,7 @@ test('an installer that exits non-zero fails the job', async () => {
   writeProfile()
   writeInstalled('0.2.0')
   const spawnImpl = fakeSpawn({ exitCode: 3, output: 'boom' })
-  const { updater } = makeUpdater({ document: channelDocument('0.3.0'), spawn: spawnImpl })
+  const { updater } = makeUpdater({ document: channelDocument(NEWER_VERSION), spawn: spawnImpl })
 
   await assert.rejects(updater.upgrade({}), /exited with code 3/)
   assert.equal(updater.jobView().state, 'failed')
@@ -275,7 +281,7 @@ test('upgrade refuses when there is nothing newer, without spawning', async () =
 test('routes answer ping, version, update and 404', async () => {
   writeProfile()
   writeInstalled('0.2.0')
-  const { updater } = makeUpdater({ document: channelDocument('0.3.0') })
+  const { updater } = makeUpdater({ document: channelDocument(NEWER_VERSION) })
   const handle = createUpdateRoutes(updater)
 
   async function call(method, url, body) {
@@ -314,7 +320,7 @@ test('routes answer ping, version, update and 404', async () => {
   const updateAnswer = await call('GET', '/update?force=1')
   assert.equal(updateAnswer.body.hasUpdate, true)
 
-  const upgrade = await call('POST', '/update/upgrade', { version: '0.3.0' })
+  const upgrade = await call('POST', '/update/upgrade', { version: NEWER_VERSION })
   assert.equal(upgrade.status, 202)
   assert.equal(upgrade.body.ok, true)
 

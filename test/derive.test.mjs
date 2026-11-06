@@ -25,12 +25,16 @@ function loadPure() {
   const body = CLIENT_SOURCE.slice(start, end);
   const factory = new Function(`${body}
     return { KIND_RANK, EMPTY_STATUS, readStatus, buildSessionWorkspaceIndex, relativeTimeKey,
-             deriveActiveRows, STORAGE_KEY, readPrefs };`);
+             deriveActiveRows, STORAGE_KEY, readPrefs, draftSnippetOf, collectDrafts,
+             sameDrafts, DRAFT_KEY_PREFIX, currentSessionIdOf };`);
   return factory();
 }
 
 const pure = loadPure();
-const { deriveActiveRows, relativeTimeKey, buildSessionWorkspaceIndex, KIND_RANK } = pure;
+const {
+  deriveActiveRows, relativeTimeKey, buildSessionWorkspaceIndex, KIND_RANK,
+  draftSnippetOf, collectDrafts, sameDrafts, DRAFT_KEY_PREFIX, currentSessionIdOf,
+} = pure;
 
 /** One SessionSummary-shaped row. */
 function summary(id, overrides = {}) {
@@ -79,7 +83,8 @@ const RUNNING_TURN = (turnSeq) => ({ lastTurnSeq: turnSeq, lastTurn: 'running', 
 
 test('KIND_RANK puts whoever waits on the user first', () => {
   assert.ok(KIND_RANK.waiting < KIND_RANK.running);
-  assert.ok(KIND_RANK.running < KIND_RANK.failed);
+  assert.ok(KIND_RANK.running < KIND_RANK.drafted);
+  assert.ok(KIND_RANK.drafted < KIND_RANK.failed);
   assert.ok(KIND_RANK.failed < KIND_RANK.done);
 });
 
@@ -350,4 +355,132 @@ test('an unreadable ack map still shows waiting and running rows', () => {
     now: 5000,
   });
   assert.deepEqual(rows.map((row) => [row.id, row.kind]), [['ask', 'waiting'], ['run', 'running']]);
+})
+/* ---- Unsent drafts (composer localStorage) ---- */
+
+/** A tiny Storage double: the composer's keys plus unrelated noise. */
+function fakeStorage(entries) {
+  const keys = Object.keys(entries);
+  return {
+    length: keys.length,
+    key: (index) => keys[index] ?? null,
+    getItem: (key) => (key in entries ? entries[key] : null),
+  };
+}
+
+test('draftSnippetOf collapses whitespace, truncates and ignores empty drafts', () => {
+  assert.equal(draftSnippetOf({ text: '  你好\n\n世界  ', references: [] }), '你好 世界');
+  assert.equal(draftSnippetOf({ text: '', references: [] }), null);
+  assert.equal(draftSnippetOf(undefined), null);
+  /* A references-only draft is still unsent work. */
+  assert.equal(draftSnippetOf({ text: '', references: ['src/a.ts'] }), '@src/a.ts');
+  const long = draftSnippetOf({ text: 'x'.repeat(200), references: [] });
+  assert.equal(long.length, 49);
+  assert.ok(long.endsWith('…'));
+})
+
+test('collectDrafts reads only the composer namespace and memoizes raw values', () => {
+  const storage = fakeStorage({
+    [`${DRAFT_KEY_PREFIX}session-a`]: JSON.stringify({ draft: { text: 'one', references: [] } }),
+    [`${DRAFT_KEY_PREFIX}session-b`]: JSON.stringify({ draft: { text: '   ', references: [] } }),
+    'dsh-active-sessions:v1': '{"collapsed":true}',
+  });
+  const { drafts, memo } = collectDrafts(storage);
+  assert.deepEqual(drafts, { 'session-a': 'one' });
+  assert.equal(memo.size, 2);
+
+  /* Unchanged keys are taken from the memo instead of being parsed again. */
+  const stale = new Map([...memo].map(([key, value]) => [key, { raw: value.raw, snippet: 'cached' }]));
+  const again = collectDrafts(storage, DRAFT_KEY_PREFIX, stale);
+  assert.equal(again.drafts['session-a'], 'cached');
+})
+
+test('sameDrafts compares snippets, not object identity', () => {
+  assert.equal(sameDrafts({ a: 'x' }, { a: 'x' }), true);
+  assert.equal(sameDrafts({ a: 'x' }, { a: 'y' }), false);
+  assert.equal(sameDrafts({ a: 'x' }, { a: 'x', b: 'y' }), false);
+  assert.equal(sameDrafts({}, {}), true);
+})
+
+test('a Session with an unsent draft is listed as drafted, above the review buckets', () => {
+  const list = listState([
+    { session: summary('drafting', { updatedAt: 3000 }) },
+    { session: summary('finished'), projection: finished(9) },
+  ]);
+  const rows = deriveActiveRows({
+    list,
+    statuses: {},
+    workspaces: { items: [] },
+    drafts: { drafting: '我还想补充一句' },
+    now: 5000,
+  });
+  assert.deepEqual(rows.map((row) => [row.id, row.kind]), [
+    ['drafting', 'drafted'],
+    ['finished', 'done'],
+  ]);
+  assert.equal(rows[0].draft, '我还想补充一句');
+})
+
+test('waiting and running outrank a draft in the same Session', () => {
+  const list = listState([{ session: summary('s1') }, { session: summary('s2') }]);
+  const rows = deriveActiveRows({
+    list,
+    statuses: statusMap([
+      { session: { id: 's1' }, status: { pendingInteraction: { key: 'k', kind: 'question', sessionId: 's1' } } },
+      { session: { id: 's2' }, status: { running: true } },
+    ]),
+    workspaces: { items: [] },
+    drafts: { s1: 'draft one', s2: 'draft two' },
+    now: 5000,
+  });
+  assert.deepEqual(rows.map((row) => [row.id, row.kind]), [['s1', 'waiting'], ['s2', 'running']]);
+})
+
+test('the open Session is not echoed back to the user', () => {
+  const list = listState([{ session: summary('open') }, { session: summary('other') }]);
+  const input = {
+    list,
+    statuses: {},
+    workspaces: { items: [] },
+    drafts: { open: 'typing now', other: 'left behind' },
+    now: 5000,
+  };
+  assert.deepEqual(deriveActiveRows(input).map((row) => row.id), ['open', 'other']);
+  assert.deepEqual(deriveActiveRows({ ...input, openSessionId: 'open' }).map((row) => row.id), ['other']);
+})
+
+test('a draft survives an abandoned turn, an ack never hides it, snooze does', () => {
+  const list = listState([{ session: summary('s1', { updatedAt: 1000 }) }]);
+  const base = {
+    list,
+    statuses: {},
+    workspaces: { items: [] },
+    now: 10 * 60 * 1000,
+  };
+  /* `turn/start` with no `turn/end` and no activity for minutes: the turn is
+     neither running nor finished, but the draft is still the user's. */
+  assert.deepEqual(deriveActiveRows({ ...base, drafts: { s1: 'x' }, list: listState([{ session: summary('s1', { updatedAt: 1000 }), projection: RUNNING_TURN(4) }]) })
+    .map((row) => row.kind), ['drafted']);
+  /* An ack of an older turn does not clear unfinished work. */
+  assert.deepEqual(deriveActiveRows({ ...base, drafts: { s1: 'x' }, acked: { s1: 4 } }).map((row) => row.kind), ['drafted']);
+  assert.deepEqual(deriveActiveRows({ ...base, drafts: { s1: 'x' }, snooze: { s1: base.now + 1000 } }), []);
+})
+
+test('the Session retained by the main view is the one on screen', () => {
+  /* Same derivation the workspace list uses for its row highlight
+     (`retainedBy.mainView > 0`), so a draft in the Session the user is
+     looking at is not echoed back as a list row. */
+  const state = {
+    ids: ['s1', 's2'],
+    byId: {
+      s1: { id: 's1', retainedBy: { sidebar: 1 } },
+      s2: { id: 's2', retainedBy: { mainView: 2, sidebar: 1 } },
+    },
+  };
+  assert.equal(currentSessionIdOf(state), 's2');
+  assert.equal(currentSessionIdOf({ ids: ['s1'], byId: { s1: { id: 's1' } } }), null);
+  assert.equal(currentSessionIdOf(undefined), null);
+  assert.equal(currentSessionIdOf({ ids: ['gone'], byId: { s1: { id: 's1', retainedBy: { mainView: 1 } } } }), null);
+  /* A malformed summary must not throw while the list is still loading. */
+  assert.equal(currentSessionIdOf({ ids: ['s1', 's2'], byId: { s1: null, s2: { id: 's2', retainedBy: { mainView: 1 } } } }), 's2');
 })

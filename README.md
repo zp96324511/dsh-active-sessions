@@ -12,8 +12,9 @@ Each session appears once, with its highest-priority state.
 |---|---|---|---|---|
 | 1 | Waiting on you | `status.pendingInteraction != null` | still orange dot | Waiting for approval / question / plan review (unknown kinds fall back to a generic label) |
 | 2 | Generating | `status.running === true` | pulsing accent dot | Generating… |
-| 3 | Failed, unreviewed | turn ended with an error, not acknowledged | red dot | Turn failed, not reviewed (error summary on hover) |
-| 4 | Done, unreviewed | turn completed, not acknowledged | green dot | Completed, not reviewed |
+| 3 | Draft not sent | this browser holds unsent composer text for the session | hollow dot | `Draft: <first 48 chars>` |
+| 4 | Failed, unreviewed | turn ended with an error, not acknowledged | red dot | Turn failed, not reviewed (error summary on hover) |
+| 5 | Done, unreviewed | turn completed, not acknowledged | green dot | Completed, not reviewed |
 
 Inside a state, rows sort by `updatedAt` descending. Blank sessions, sub-sessions (`parentId` / `origin === 'subagent'`) and archived sessions are excluded. A parent row shows `⚙ N` when it has N running direct children.
 
@@ -40,16 +41,29 @@ The baseline is a migration, not an optimisation, so it also runs with `warm: fa
 - **A host that died mid-turn** leaves a `turn/start` with no `turn/end`, so the projection says `running` forever. The client only treats an open turn as running when the session was active within the last two minutes; anything older is neither "running" nor invented as "done" — it is simply not listed. A live session has `status.running === true` and is never cut off by that bound.
 - **An unreadable ack map**: when the remote `list()` fails, the client cannot know which finished turns were seen, so it shows only the waiting and running rows (which do not depend on acks) instead of reporting every historical session as unread. `list()` itself retries eight times, 400 ms apart.
 
+## Unsent drafts (0.3.0)
+
+The scenario: you type half a message in session A, switch to session B for something urgent, and when you come back A is nowhere to be found.
+
+The host already persists every composer draft in localStorage under `dsh.conversation.<sessionId>` (`{ draft: { text, references }, view, … }`, `dsh-client-ui-conversation`'s `CONVERSATION_STORE_KEY`). So this needs no host change, no new storage and no hook inside the composer:
+
+- The client scans that namespace once a second (memoized on the raw string, so only changed keys are parsed), and also listens to `storage` (another tab editing a draft) and `visibilitychange` (refresh the moment the tab returns).
+- A session with a draft joins the "draft not sent" bucket, ranked after generating and before failed/done: it is your own unfinished work, so it deserves to be seen before the "come back and review" rows.
+- The subtitle shows the first 48 characters (whitespace collapsed), which is what lets you recognise it at a glance.
+- The row has **no ✓**: a draft is not unread, and `ack-by-turn` has nothing to acknowledge. It disappears when you send the text or clear the box (the next scan drops it). `⌛` still works.
+- The session you are looking at right now is not listed (no point echoing what the composer already shows); the workspace row's `aria-selected` decides that.
+- It is per-browser by nature: the draft text never left this browser, so another device legitimately shows nothing.
+
 ## Interaction
 
 | Action | Effect |
 |---|---|
-| Click a row | Open the session and mark it reviewed |
-| Hover ✓ on a row | Mark reviewed without opening |
-| Hover ⌛ on a row | Snooze for one hour (failed / done rows only) |
-| Header ✓ / ⌛ | Acknowledge or snooze all current failed + done rows |
+| Click a row | Open the session and mark it reviewed (a draft row only opens) |
+| Hover ✓ on a row | Mark reviewed without opening (draft rows have no ✓) |
+| Hover ⌛ on a row | Snooze for one hour (failed / done / draft rows) |
+| Header ✓ / ⌛ | Acknowledge or snooze all current failed + done rows (draft rows are never bulk-acknowledged) |
 | Click the header | Collapse / expand (remembered locally) |
-| Keyboard | On the header or a row: `↑/↓` move, `Enter` open, `Shift+Enter` mark reviewed, `Esc` blur |
+| Keyboard | On the header or a row: `↑/↓` move, `Enter` open, `Shift+Enter` mark reviewed (draft rows open instead), `Esc` blur |
 
 The header badge counts only sessions waiting on you. The block is capped at `min(320px, 40vh)` and scrolls internally beyond eight rows.
 

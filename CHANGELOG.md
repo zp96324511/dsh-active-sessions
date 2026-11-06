@@ -2,6 +2,18 @@
 
 本文件格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.3.0] - 2026-11-06
+
+新增「草稿未发送」状态：在某个会话里打了一半、切走之后就找不回来的那个会话，现在会被列出来。
+
+### 新增
+
+- 第四种状态 `drafted`，插在「生成中」与「失败未确认」之间。判定来自宿主本来就落盘的输入框草稿（localStorage `dsh.conversation.<sessionId>` 的 `draft.text` / `draft.references`），因此不需要宿主改动、不需要新存储、也不需要在输入框上挂钩子。
+- 行副标题直接显示草稿前 48 字（空白折叠），一眼认出是哪句；圆点是空心环，与四种实心状态区分。
+- 草稿行只有 `→` 与 `⌛`，没有 `✓`：草稿不是未读，`ack-by-turn` 对它没有意义；发出去或清空输入框后，下一次扫描自动消失。
+- 扫描按原始字符串做 memo（只解析变化过的键），并监听 `storage` 与 `visibilitychange`；当前正打开的那个会话不列（依据工作区行的 `aria-selected`）。
+- 两个新文案键 `drafted` / `draftPrefix`，`locale/zh.json` 与 `locale/en.json` 同步。
+
 ## [0.2.3] - 2026-11-06
 
 手机上「正在活跃」区块看不到的根因修复：不再依赖第三方抽屉插件找到宿主。
