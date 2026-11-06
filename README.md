@@ -63,6 +63,12 @@ Below a 1024px viewport the host trades the sidebar column for a rail, and a mob
 - Touch screens never hover, so the `→ ✓ ⌛` buttons are always shown through `@media (hover: none)` and the subtitle yields its space.
 - The 768–1024px rail is a grid column, not an overlay, so opening a row there does not collapse anything.
 
+### Why the drawer needs an opener from this plugin
+
+A drawer takeover (`dsh-mobile-upgrade`'s floating button) does not drive the React layout itself: it looks for the host's published `[data-sidebar-opener]` (or `[data-sidebar-toggle]`) and clicks it. DSH 0.2.1-rc.2 publishes neither, so the click lands on nothing and the drawer never opens — and since the rail renders no list, the group can never be reached.
+
+Since 0.2.3 this plugin ships the missing element itself: a 1×1, `opacity:0`, unfocusable (`tabIndex=-1`), `pointer-events:none` `button.dsh-as-opener[data-sidebar-opener]` that calls the host's `layout.toggleSidebar()` when clicked. The takeover finally has a real target; the sidebar expands, the list mounts, and the group appears with it. **No modification and no patch to `dsh-mobile-upgrade` is involved** — it never sees the element, it just stops clicking into the void.
+
 ## Install
 
 The host profile lives at `~/.dsh/profiles/web` (`C:\Users\win10\.dsh\profiles\web` on Windows).

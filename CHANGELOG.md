@@ -2,6 +2,14 @@
 
 本文件格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.2.3] - 2026-11-06
+
+手机上「正在活跃」区块看不到的根因修复：不再依赖第三方抽屉插件找到宿主。
+
+### 修复
+
+- 窄屏时宿主把侧栏收成导轨，工作区列表根本不渲染，区块自然无处可挂；而把侧栏唤出来的抽屉接管（`dsh-mobile-upgrade` 的浮动按钮）要找宿主发布的 `[data-sidebar-toggle]` / `[data-sidebar-opener]` 再点它，DSH 0.2.1-rc.2 两个都不发布，于是抽屉永远打不开、区块永远不可达。本插件现在自带一个 1×1、不可聚焦、不可点击的 `[data-sidebar-opener]`（`button.dsh-as-opener`），点击时通过宿主的 `layout.toggleSidebar()` 展开侧栏——抽屉接管拿到真实目标，区块随列表一起出现。**不需要修改 dsh-mobile-upgrade**，它的行为完全不变。
+
 ## [0.2.2] - 2026-11-06
 
 移动端（窄屏抽屉）适配。

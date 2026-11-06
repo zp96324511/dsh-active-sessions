@@ -763,6 +763,11 @@ window.__ModuleLoader__.load({
       'background:var(--dsw-alias-bg-skeleton,rgba(128,128,128,.12));color:var(--dsw-alias-label-secondary,rgba(128,128,128,.95))}',
       '@keyframes dshAsPulse{0%,100%{opacity:1}50%{opacity:.3}}',
       '@media (prefers-reduced-motion: reduce){.dsh-as-dot[data-kind="running"]{animation:none}}',
+      // Inert opener: 1x1, off the flow, never hit by a finger. It exists only
+      // so a drawer takeover can find the host contract it clicks.
+      '.dsh-as-opener{position:fixed;left:0;top:0;width:1px;height:1px;padding:0;border:0;',
+      'background:transparent;opacity:0;overflow:hidden;pointer-events:none;',
+      'appearance:none;-webkit-appearance:none}',
     ].join('');
 
     /** Inject the stylesheet once per document. */
@@ -1456,6 +1461,48 @@ window.__ModuleLoader__.load({
           return createPortal(h(ActiveSessionsContent, props), host);
         }
 
+        /**
+         * The hidden-sidebar opener contract.
+         *
+         * A phone-sized window does not show the sidebar as a grid column: the
+         * host keeps it collapsed and a takeover (dsh-mobile-upgrade's floating
+         * button) is supposed to summon it. That takeover does not drive the
+         * React layout itself — it looks for the host's published opener
+         * (`[data-sidebar-opener]`, the seat a shell mounts for a hidden
+         * sidebar) and clicks it. DSH 0.2.1-rc.2 publishes neither that
+         * attribute nor `[data-sidebar-toggle]`, so the click finds nothing and
+         * the drawer never opens — which is why this block, which lives inside
+         * the workspace list, is unreachable on a phone.
+         *
+         * Shipping the missing element fixes that from our side: the takeover
+         * gets a real target, the host expands through its own toggle, and the
+         * list (and this block) mounts. It stays invisible and unfocusable so
+         * the closed state looks exactly as it did, and it toggles through the
+         * public `uiWorkspace`-sibling `layout` service rather than reaching
+         * into anyone's DOM.
+         */
+        function SidebarOpener() {
+          return h('button', {
+            type: 'button',
+            className: 'dsh-as-opener',
+            'data-sidebar-opener': '',
+            'aria-hidden': 'true',
+            tabIndex: -1,
+            onClick: () => {
+              try {
+                layoutOf()?.toggleSidebar?.();
+              } catch (error) {
+                log('opening the sidebar from the hidden opener failed', error);
+              }
+            },
+          });
+        }
+
+        /** The opener rides along with the overlay entry, outside the portal. */
+        function ActiveSessionsOverlayEntry(props) {
+          return h(React.Fragment, null, h(SidebarOpener), h(ActiveSessionsOverlay, props));
+        }
+
         /** Fallback main panel body. */
         function ActiveSessionsPanel(props) {
           return h(ActiveSessionsContent, { ...props, mode: 'panel', fallbackNote: true });
@@ -1483,7 +1530,7 @@ window.__ModuleLoader__.load({
           name: 'shell.overlay',
           id: 'active-sessions',
           order: 100,
-        }, ActiveSessionsOverlay));
+        }, ActiveSessionsOverlayEntry));
 
         return async () => {
           try {

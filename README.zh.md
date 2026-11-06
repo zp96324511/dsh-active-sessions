@@ -70,6 +70,12 @@ ack 表初始是空的，而库里已经有几千个早就结束的历史会话�
 - 触摸屏没有 hover，行右侧的 `→ ✓ ⌛` 通过 `@media (hover: none)` 常驻显示，副标题让出空间。
 - 768–1024px 的导轨列不是浮层，点行不会收起侧栏。
 
+### 抽屉为什么需要本插件提供一个「开门器」
+
+移动端抽屉（`dsh-mobile-upgrade` 的浮动按钮）自己不去改宿主的布局，它按宿主发布的契约找 `[data-sidebar-opener]`（或 `[data-sidebar-toggle]`）再点一下。DSH 0.2.1-rc.2 这两个属性都不发布，于是那一下点在空气上，抽屉永远打不开——而导轨态宿主不渲染列表，分组也就永远不可达。
+
+0.2.3 起本插件自带这个元素：一个 1×1、`opacity:0`、不可聚焦（`tabIndex=-1`）、`pointer-events:none` 的 `button.dsh-as-opener[data-sidebar-opener]`，点击时调用宿主的 `layout.toggleSidebar()`。抽屉接管拿到真实目标，侧栏展开、列表挂载、分组随之出现。**不需要修改、也不需要给 `dsh-mobile-upgrade` 打补丁**；它看不见这个元素，只是终于能点到东西。
+
 ## 安装
 
 宿主 profile 位于 `~/.dsh/profiles/web`（Windows 上是 `C:\Users\win10\.dsh\profiles\web`）。
