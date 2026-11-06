@@ -62,19 +62,30 @@ ack 表初始是空的，而库里已经有几千个早就结束的历史会话�
 
 ## 安装
 
-插件本体在 `C:\data\projects\dsh-active-sessions`，安装到 web profile：
+宿主 profile 位于 `~/.dsh/profiles/web`（Windows 上是 `C:\Users\win10\.dsh\profiles\web`）。
+
+### 从 GitHub 安装
 
 ```powershell
-npm --prefix C:\Users\win10\.dsh\profiles\web install "file:C:\data\projects\dsh-active-sessions"
+npm --prefix "$env:USERPROFILE\.dsh\profiles\web" install "github:zp96324511/dsh-active-sessions"
+# 固定版本：... "github:zp96324511/dsh-active-sessions#v0.1.0"
 ```
 
-然后在 `C:\Users\win10\.dsh\profiles\web\package.json` 的 `dsh.profile.bundles` 末尾追加 `"dsh-active-sessions"`：
+然后在 profile 的 `package.json` 里把包名追加到 `dsh.profile.bundles` 末尾：
 
 ```json
 "bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app", "...", "dsh-active-sessions"]
 ```
 
 **重启 dsh Web Host**（宿主半侧新增了投影、存储域和远程服务，必须重启；只改 `client.js` 时保存即可热替换）。
+
+### 本地开发（目录联结）
+
+插件源码在 `C:\data\projects\dsh-active-sessions`，用 `file:` 安装到 web profile：
+
+```powershell
+npm --prefix C:\Users\win10\.dsh\profiles\web install "file:C:\data\projects\dsh-active-sessions"
+```
 
 `file:` 安装出来的是目录联结（junction），改插件源码即时生效，适合开发。发布给别人时用 tarball：
 

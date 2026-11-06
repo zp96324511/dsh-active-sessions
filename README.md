@@ -55,11 +55,28 @@ The header badge counts only sessions waiting on you. The block is capped at `mi
 
 ## Install
 
+The host profile lives at `~/.dsh/profiles/web` (`C:\Users\win10\.dsh\profiles\web` on Windows).
+
+### From GitHub
+
+```powershell
+npm --prefix "$env:USERPROFILE\.dsh\profiles\web" install "github:zp96324511/dsh-active-sessions"
+# pin a version: ... "github:zp96324511/dsh-active-sessions#v0.1.0"
+```
+
+Then append `"dsh-active-sessions"` to `dsh.profile.bundles` in the profile's `package.json`:
+
+```json
+"bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app", "...", "dsh-active-sessions"]
+```
+
+and **restart the dsh Web Host** — the host half registers a projection, a storage domain and a remote service. Client-only edits in `client.js` hot-swap without a restart.
+
+### Local development (directory junction)
+
 ```powershell
 npm --prefix C:\Users\win10\.dsh\profiles\web install "file:C:\data\projects\dsh-active-sessions"
 ```
-
-Then append `"dsh-active-sessions"` to `dsh.profile.bundles` in `C:\Users\win10\.dsh\profiles\web\package.json`, and **restart the dsh Web Host** — the host half registers a projection, a storage domain and a remote service. Client-only edits in `client.js` hot-swap without a restart.
 
 A `file:` install becomes a directory junction, so source edits take effect immediately. For distribution, pack a tarball instead:
 
