@@ -2,6 +2,15 @@
 
 本文件格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.2.2] - 2026-11-06
+
+移动端（窄屏抽屉）适配。
+
+### 修复
+
+- 手机上点开会话后侧栏抽屉不收起，会话被抽屉挡在后面，看起来像「点了没反应」：当侧栏以固定浮层形态覆盖正文时（`innerWidth < 1024` 且侧栏列为 `position: fixed`），打开会话后调用宿主的 `layout.toggleSidebar()` 收起抽屉。桌面与 768–1024px 的导轨列不受影响。
+- 触摸屏上每行的 `→ ✓ ⌛` 只在 `:hover` / `:focus-visible` 时显示，而触摸屏永远不触发 hover，三个动作按钮等于不存在：新增 `@media (hover: none)` 规则，按钮常驻，副标题让出空间。
+
 ## [0.2.1] - 2026-11-06
 
 自更新通道。安装形态从「git 克隆 + 手动重启」升级为「Release tarball + 就地升级 + 自重启」，与 dsh-context-control 一致。0.2.0 未对外发布，0.2.1 是首个带自更新的版本。

@@ -53,6 +53,16 @@ The baseline is a migration, not an optimisation, so it also runs with `warm: fa
 
 The header badge counts only sessions waiting on you. The block is capped at `min(320px, 40vh)` and scrolls internally beyond eight rows.
 
+## Mobile
+
+Below a 1024px viewport the host trades the sidebar column for a rail, and a mobile plugin (such as `dsh-mobile-upgrade`) may take that rail over as a drawer floating above the conversation. The group follows the host:
+
+- With the drawer shut the host does not render the session list at all (the rail has no `[data-row-key]` rows), so the group is absent rather than a 54px stub.
+- With the drawer open the host lays out the wide sidebar, the list renders, and the group sits between the "workspaces" header row and the list — the same place as on the desktop.
+- After a row is opened, if the sidebar is a **fixed overlay** (`innerWidth < 1024` and the sidebar column computes to `position: fixed`), the group calls the host's `layout.toggleSidebar()` so the drawer gets out of the way; leaving it open hides the session the tap just opened.
+- Touch screens never hover, so the `→ ✓ ⌛` buttons are always shown through `@media (hover: none)` and the subtitle yields its space.
+- The 768–1024px rail is a grid column, not an overlay, so opening a row there does not collapse anything.
+
 ## Install
 
 The host profile lives at `~/.dsh/profiles/web` (`C:\Users\win10\.dsh\profiles\web` on Windows).

@@ -464,6 +464,26 @@ window.__ModuleLoader__.load({
      * ------------------------------------------------------------------ */
     const HOST_ATTRIBUTE = 'data-dsh-active';
 
+    /* Below SIDEBAR_AUTO_COLLAPSE the layout trades the sidebar column for a
+       narrower rail. The stock layout keeps it in the grid; the mobile
+       takeover pins it as a fixed overlay instead. Only the overlay case has
+       to be dismissed after a tap — a column leaves the conversation visible
+       and collapsing it there would just hide the sidebar for no reason. */
+    const SIDEBAR_AUTO_COLLAPSE = 1024;
+
+    /** @returns whether the sidebar currently floats over the conversation. */
+    function sidebarOverlays() {
+      try {
+        if (window.innerWidth >= SIDEBAR_AUTO_COLLAPSE) return false;
+        const host = document.querySelector(`[${HOST_ATTRIBUTE}]`);
+        const column = host === null ? null : host.closest('[class*="sidebarCol"]');
+        if (column === null) return false;
+        return window.getComputedStyle(column).position === 'fixed';
+      } catch {
+        return false;
+      }
+    }
+
     /**
      * Create the host node and keep it attached where it belongs.
      *
@@ -707,6 +727,10 @@ window.__ModuleLoader__.load({
       '.dsh-as-actions{display:none;flex:none;gap:2px}',
       '.dsh-as-row:hover .dsh-as-sub,.dsh-as-row:focus-visible .dsh-as-sub{display:none}',
       '.dsh-as-row:hover .dsh-as-actions,.dsh-as-row:focus-visible .dsh-as-actions{display:flex}',
+      /* Touch screens never hover: the per-row buttons have to be visible on
+         their own, and the subtitle gives up its space to them. */
+      '@media (hover:none){.dsh-as-row .dsh-as-actions{display:flex}',
+      '.dsh-as-row .dsh-as-sub{display:none}}',
       '.dsh-as-empty{padding:6px;font-size:12px;color:var(--dsw-alias-label-tertiary,rgba(128,128,128,.8))}',
       '.dsh-as-ver{flex:none;padding:0 5px;border-radius:999px;font-size:10px;line-height:16px;cursor:pointer;',
       'font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-tertiary,rgba(128,128,128,.8));',
@@ -811,6 +835,15 @@ window.__ModuleLoader__.load({
         function workspaceUiOf() {
           try {
             return ctx.get('uiWorkspace');
+          } catch {
+            return undefined;
+          }
+        }
+
+        /** @returns the frame layout service, which owns the sidebar toggle. */
+        function layoutOf() {
+          try {
+            return ctx.get('layout');
           } catch {
             return undefined;
           }
@@ -1125,6 +1158,15 @@ window.__ModuleLoader__.load({
               workspaceUi?.openSession?.(row.id);
             } catch (error) {
               log('openSession failed', error);
+            }
+            /* On a phone the sidebar is a drawer over the conversation: leaving
+               it open would keep the session the tap just opened behind it. */
+            if (sidebarOverlays()) {
+              try {
+                layoutOf()?.toggleSidebar?.();
+              } catch (error) {
+                log('collapsing the sidebar overlay failed', error);
+              }
             }
             acknowledgeRow(row);
           }, [acknowledgeRow]);
