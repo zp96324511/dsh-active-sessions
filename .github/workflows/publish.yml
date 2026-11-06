@@ -1,0 +1,104 @@
+name: Publish
+
+# Pushing a tag is the only way a release appears: the tag becomes the version,
+# and the release carries the three assets the plugin's update channel expects.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to publish (for example v0.2.0)'
+        required: true
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Check the tag matches the manifest
+        run: |
+          node -e '
+            const version = require("./package.json").version;
+            const tag = process.env.TAG.replace(/^v/, "");
+            if (version !== tag) {
+              console.error(`package.json is ${version} but the tag says ${tag}`);
+              process.exit(1);
+            }
+            console.log(`publishing ${version}`);
+          '
+
+      - name: Check
+        run: npm run check
+
+      # Publishing to npm is deliberately not wired in: the supported channel is
+      # the release tarball plus channel.json below. Add an NPM_TOKEN-based step
+      # here if the package ever goes to a registry.
+
+      - name: Pack and build the channel
+        id: pack
+        run: |
+          NAME=$(node -p 'require("./package.json").name')
+          VERSION=$(node -p 'require("./package.json").version')
+          npm pack --json > pack.json
+          TARBALL=$(node -e "console.log(require('./pack.json')[0].filename)")
+          cp "$TARBALL" "$NAME.tgz"
+          node -e '
+            const { createHash } = require("node:crypto");
+            const { readFileSync, writeFileSync, statSync } = require("node:fs");
+            const pkg = require("./package.json");
+            const name = pkg.name;
+            const version = pkg.version;
+            const repo = process.env.GITHUB_REPOSITORY;
+            const stable = `${name}.tgz`;
+            const bytes = readFileSync(stable);
+            const channel = {
+              name,
+              channel: "stable",
+              latest: version,
+              versions: {
+                [version]: {
+                  url: `https://github.com/${repo}/releases/download/v${version}/${stable}`,
+                  sha256: createHash("sha256").update(bytes).digest("hex"),
+                  size: statSync(stable).size,
+                  engines: pkg.engines ?? {},
+                  publishedAt: new Date().toISOString(),
+                  notes: pkg.description
+                }
+              },
+              homepage: pkg.homepage,
+              updatedAt: new Date().toISOString()
+            };
+            writeFileSync("channel.json", `${JSON.stringify(channel, null, 2)}\n`);
+          '
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Create the release if it is missing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view "$TAG" > /dev/null 2>&1 || \
+            gh release create "$TAG" --verify-tag --generate-notes --title "$TAG"
+
+      - name: Upload the assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          NAME=$(node -p 'require("./package.json").name')
+          VERSION=$(node -p 'require("./package.json").version')
+          gh release upload "$TAG" "$NAME.tgz" "$NAME-$VERSION.tgz" channel.json --clobber

@@ -23,5 +23,19 @@
   "daysAgo": "{count} 天前",
   "panelFallback": "侧栏结构不兼容，已启用独立面板",
   "dataUnavailable": "会话数据来源暂不可用",
-  "groupLabel": "正在活跃会话"
+  "groupLabel": "正在活跃会话",
+  "update": "插件更新",
+  "checking": "正在检查更新…",
+  "checkUpdate": "检查更新",
+  "updateFailed": "检查更新失败",
+  "updateUnavailable": "无法读取更新渠道",
+  "upToDate": "已是最新版本",
+  "updateAvailable": "有新版本",
+  "restartRequired": "已安装，重启宿主后生效",
+  "updating": "正在安装…",
+  "updated": "安装完成",
+  "restarting": "正在重启…",
+  "restartManual": "请手动重启 dsh Web Host",
+  "upgrade": "升级到",
+  "restart": "重启服务"
 }

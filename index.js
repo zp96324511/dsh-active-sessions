@@ -29,9 +29,13 @@ import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
 import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import z from '@deepseek-ai/schemastery'
 import { z as zod } from 'zod'
+import { createUpdater, createUpdateRoutes, LOADED_VERSION } from './update.js'
 
 /** Cordis plugin name used by Loader diagnostics. */
 export const name = 'dsh-active-sessions'
+
+/** Version this module was loaded from; the update channel compares it with disk. */
+export { LOADED_VERSION }
 
 /** Services this plugin reaches at apply time. The Remote service is created, not injected. */
 export const inject = ['sessionProjections', 'storageDomain']
@@ -55,6 +59,33 @@ export const Config = z.object({
   warmPauseMs: z.number().default(150),
   /** Skip stored logs larger than this (bytes, compressed): a cold read holds the whole log. */
   warmMaxBytes: z.number().default(4 * 1024 * 1024),
+  /**
+   * Update channel served at `/plugins/dsh-active-sessions/*`.
+   *
+   * The channel is derived from how the package was installed: a release tarball
+   * points at the `channel.json` next to `releases/latest/download/`, a registry
+   * install asks the registry, and `file:`/`link:`/git installs refuse to upgrade
+   * in place until `manifestUrl` or `github` names a channel explicitly.
+   */
+  update: z.object({
+    /** Explicit channel.json URL; wins over everything else. */
+    manifestUrl: z.string().default(''),
+    /** `owner/repo` shorthand for a GitHub release channel. */
+    github: z.string().default(''),
+    /** Registry base URL for registry installs; empty means npm's configured one. */
+    registry: z.string().default(''),
+    /** How long a channel read stays cached before the next check. */
+    checkIntervalMs: z.number().default(6 * 60 * 60 * 1000),
+    /** Channel read timeout. */
+    timeoutMs: z.number().default(8000),
+    /** How long an installer run may take before it is abandoned. */
+    upgradeTimeoutMs: z.number().default(15 * 60 * 1000),
+    /** How a restart is carried out: `respawn` (default), `exit`, or `none` to disable. */
+    restart: z.object({
+      mode: z.string().default('respawn'),
+      port: z.number().default(0),
+    }),
+  }),
 })
 
 /** Prototype marker the Typert Gateway reads for remotely callable methods. */
@@ -594,6 +625,68 @@ export async function apply(ctx, config = {}) {
 
   const service = new ActiveSessionsRemote(ctx, ops)
 
+  /* ---------------- update channel ---------------- */
+
+  /* `webServer` gets its own fiber: a headless host never provides it, and a
+   * broken update channel must not take the whole group down with it. */
+  let updater = null
+  ctx.inject(['webServer'], (scoped) => {
+    const webServer = scoped.get('webServer')
+    if (webServer === undefined) return
+    const disposers = []
+    try {
+      updater = createUpdater({ ctx, config, logger: (message) => warn(ctx, message) })
+      const handle = createUpdateRoutes(updater)
+      const prefix = `/plugins/${name}`
+      const handler = (req, res) => {
+        let pathname = '/'
+        try {
+          /* The route matcher hands over the full request path; the table below
+           * is relative to the prefix, so strip it before dispatch. */
+          pathname = new URL(req.url ?? '/', 'http://localhost').pathname
+          if (pathname.startsWith(prefix)) pathname = pathname.slice(prefix.length) || '/'
+        } catch {
+          pathname = '/'
+        }
+        handle(req, res, pathname).catch((error) => {
+          warn(ctx, `update route failed: ${String(error)}`)
+          try {
+            res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
+            res.end(JSON.stringify({ ok: false, error: String(error) }))
+          } catch {
+            /* the socket may already be gone */
+          }
+        })
+      }
+      disposers.push(webServer.register({ kind: 'prefix', path: prefix, handler }))
+      scoped.effect(() => () => {
+        for (const dispose of disposers) {
+          try {
+            dispose()
+          } catch {
+            /* best effort on unload */
+          }
+        }
+        try {
+          updater?.dispose()
+        } catch {
+          /* best effort on unload */
+        }
+        updater = null
+      })
+    } catch (error) {
+      warn(ctx, `update channel unavailable: ${String(error)}`)
+      for (const dispose of disposers) {
+        try {
+          dispose()
+        } catch {
+          /* best effort */
+        }
+      }
+    }
+  })
+
+
   /* The sweep runs even with `warm: false`: the baseline is a migration, not
    * an optimisation, and skipping it would resurrect every finished Session. */
   const warmup = startWarmup(ctx, config, { baseline })
@@ -603,6 +696,11 @@ export async function apply(ctx, config = {}) {
     /* `void` keeps the service reachable until this cleanup runs; the Gateway
      * owns the actual unregistration of the fiber-registered service. */
     void service
+    try {
+      updater?.dispose()
+    } catch {
+      /* best effort on unload */
+    }
     if (domain !== null) void domain.close().catch(() => { /* best effort on unload */ })
   }
 }

@@ -64,20 +64,61 @@ ack 表初始是空的，而库里已经有几千个早就结束的历史会话�
 
 宿主 profile 位于 `~/.dsh/profiles/web`（Windows 上是 `C:\Users\win10\.dsh\profiles\web`）。
 
-### 从 GitHub 安装
+### 一条命令（推荐）
 
 ```powershell
-npm --prefix "$env:USERPROFILE\.dsh\profiles\web" install "github:zp96324511/dsh-active-sessions"
-# 固定版本：... "github:zp96324511/dsh-active-sessions#v0.1.0"
+dsh plugin --profile web add https://github.com/zp96324511/dsh-active-sessions/releases/latest/download/dsh-active-sessions.tgz
 ```
 
-然后在 profile 的 `package.json` 里把包名追加到 `dsh.profile.bundles` 末尾：
+`dsh plugin add` 会把包名自动追加进 profile 的 `dsh.profile.bundles`，不需要手改 `package.json`。装完**重启 dsh Web Host**（宿主半侧有投影、存储域、远程服务和更新路由，必须重启；只改 `client.js` 时保存即可热替换）。
 
-```json
-"bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app", "...", "dsh-active-sessions"]
+固定版本就把 URL 里的版本换成 `releases/download/v0.2.1/dsh-active-sessions-0.2.1.tgz`。没有 `dsh` 命令时等价写法：
+
+```powershell
+node "$env:USERPROFILE\AppData\Local\Author Software\nvm\installs\v26.10.0\node_modules\@deepseek-ai\dsh\lib\bin.js" plugin --profile web add <tarball-url>
 ```
 
-**重启 dsh Web Host**（宿主半侧新增了投影、存储域和远程服务，必须重启；只改 `client.js` 时保存即可热替换）。
+### 之后：自带更新
+
+分组标题右侧有版本胶囊：
+
+| 胶囊 | 含义 | 点开 |
+|---|---|---|
+| `v0.2.1` | 已是最新 | 检查更新 / 查看渠道 |
+| `v0.2.1 ↑` | 有新版本 | 升级（就地换版本）/ 检查更新 |
+| `v0.2.1 ⟳` | 已升级，待重启 | 重启服务（自动拉起）/ 手动重启说明 |
+| `v0.2.1 ?` | 查不到渠道 | 显示失败原因 |
+
+升级走 `dsh plugin add <新 tarball>`：原地替换、继承 pnpm 锁与 `engines` 预检，失败不动现有安装。重启走 `respawn.cjs`：等旧进程退出、等端口释放、用同一套命令行拉起，重启后仍是原来的 `--profile` / `--port`。任务记录落 `$DSH_HOME/storages/dsh-active-sessions-update.json`，中途被打断会记成失败而不是永远「进行中」。
+
+更新渠道从**当前安装形态**自动推导，不需要配置：
+
+| 安装形态 | 渠道 |
+|---|---|
+| Release tarball URL | 同仓库 `releases/latest/download/channel.json`（tagged URL 也解析到 latest，避免渠道被冻在旧 tag） |
+| GitHub release 页里的 tgz | `releases/latest/download/channel.json` |
+| 同目录 tarball | `<目录>/channel.json` |
+| `file:` / `link:` | **拒绝原地升级**（没有版本可比），胶囊会说明原因 |
+| `github:` / git | **拒绝原地升级**（指向的是分支树），同上 |
+
+因此本地 `file:` 目录联结适合开发，但不适合验更新 UI；要在本地试更新链路，用 `npm run channel` + `npm run channel:serve`，再从 `http://127.0.0.1:10600/dsh-active-sessions-<版本>.tgz` 装。
+
+需要强制指定渠道时（比如本地检出也想用更新 UI）：
+
+```yaml
+- id: active-sessions
+  name: dsh-active-sessions
+  config:
+    update:
+      github: zp96324511/dsh-active-sessions   # 或 manifestUrl: https://…/channel.json
+      registry: https://registry.npmjs.org
+      checkIntervalMs: 21600000                 # 检查结果缓存，默认 6 小时
+      timeoutMs: 8000                           # 单次 HTTP 超时
+      upgradeTimeoutMs: 900000                  # 升级子进程超时，默认 15 分钟
+      restart:
+        mode: respawn                           # respawn | exit | none
+        port: 0                                 # 0 = 从命令行推断
+```
 
 ### 本地开发（目录联结）
 
@@ -92,13 +133,14 @@ npm --prefix C:\Users\win10\.dsh\profiles\web install "file:C:\data\projects\dsh
 ```powershell
 cd C:\data\projects\dsh-active-sessions
 npm pack
-npm --prefix C:\Users\win10\.dsh\profiles\web install --no-audit "file:C:\data\projects\dsh-active-sessions\dsh-active-sessions-0.1.0.tgz"
+npm --prefix C:\Users\win10\.dsh\profiles\web install --no-audit "file:C:\data\projects\dsh-active-sessions\dsh-active-sessions-0.2.1.tgz"
 ```
 
 卸载：
 
 ```powershell
-npm --prefix C:\Users\win10\.dsh\profiles\web uninstall dsh-active-sessions
+dsh plugin --profile web remove dsh-active-sessions
+# 或 npm --prefix "$env:USERPROFILE\.dsh\profiles\web" uninstall dsh-active-sessions
 # 再从 dsh.profile.bundles 里删掉 "dsh-active-sessions"，重启宿主
 ```
 

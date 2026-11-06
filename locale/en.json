@@ -23,5 +23,19 @@
   "daysAgo": "{count}d ago",
   "panelFallback": "The sidebar layout is incompatible; the standalone panel is in use",
   "dataUnavailable": "Session data is unavailable right now",
-  "groupLabel": "Active sessions"
+  "groupLabel": "Active sessions",
+  "update": "Plugin update",
+  "checking": "Checking for updates…",
+  "checkUpdate": "Check for updates",
+  "updateFailed": "The update check failed",
+  "updateUnavailable": "The update channel could not be read",
+  "upToDate": "Up to date",
+  "updateAvailable": "New version available",
+  "restartRequired": "Installed — restart the host to apply",
+  "updating": "Installing…",
+  "updated": "Installed",
+  "restarting": "Restarting…",
+  "restartManual": "Restart the dsh Web Host manually",
+  "upgrade": "Upgrade to",
+  "restart": "Restart service"
 }

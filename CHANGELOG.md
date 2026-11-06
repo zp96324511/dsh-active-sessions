@@ -2,6 +2,29 @@
 
 本文件格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.2.1] - 2026-11-06
+
+自更新通道。安装形态从「git 克隆 + 手动重启」升级为「Release tarball + 就地升级 + 自重启」，与 dsh-context-control 一致。0.2.0 未对外发布，0.2.1 是首个带自更新的版本。
+
+### 修复
+
+- 前缀路由把完整请求路径交给处理函数，导致 `/plugins/dsh-active-sessions/*` 全部回 `no route`：处理函数现在先剥掉挂载前缀再分发。
+
+### 新增
+
+- 宿主 `update.js`：更新渠道自动推导（Release tarball → 同目录 `channel.json`；GitHub → `releases/latest/download/channel.json`；registry → registry；`file:`/`link:`/git → 拒绝原地升级并给出指引），`/plugins/dsh-active-sessions/{ping,version,update,update/job,update/upgrade,update/restart}` 路由。
+- 就地升级：子进程执行 `dsh plugin --profile <p> add <spec>`，保留 pnpm 锁与 `engines` 预检、失败不动现有安装；升级任务落 `$DSH_HOME/storages/dsh-active-sessions-update.json`，中途被重载打断会记成失败而不是永远「进行中」。
+- `respawn.cjs`：等旧 PID 退出 → 等端口释放 → 同命令行拉起，重启后仍是原来的 `--profile` / `--port` / 环境。
+- 客户端版本行：分组标题右侧显示 `v0.2.0`，有新版本 `↑`、待重启 `⟳`；点开是检查 / 升级 / 重启三个动作与状态文字，折叠状态下也看得到。
+- `npm run channel` / `channel:serve`：本地生成并服务 `dist/`（tarball + `channel.json`，含 sha256），可在不发布的情况下走完升级链路。
+- `.github/workflows/{ci,publish}.yml`：CI 校验清单、入口文件与临时 profile 试装；打 `v*` 标签发布三个资产（`dsh-active-sessions.tgz`、版本化 tgz、`channel.json`）。
+- `scripts/check-manifest.mjs`：`files`/`exports`/版本/`locale` 键集合的一致性护栏，`npm run check` 第一步。
+
+### 变更
+
+- 安装方式改为一条命令：`dsh plugin --profile web add https://github.com/zp96324511/dsh-active-sessions/releases/latest/download/dsh-active-sessions.tgz`。本地 `file:` 目录联结仍可用于开发，但该形态不支持原地升级（渠道会明确说明原因）。
+- `package.json` 新增 `./update`、`./respawn` 导出，`files` 收录 `update.js`、`respawn.cjs`。
+
 ## [0.1.0] - 2026-11-06
 
 首个版本。宿主半侧与客户端半侧一起发布。

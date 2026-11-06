@@ -57,20 +57,61 @@ The header badge counts only sessions waiting on you. The block is capped at `mi
 
 The host profile lives at `~/.dsh/profiles/web` (`C:\Users\win10\.dsh\profiles\web` on Windows).
 
-### From GitHub
+### One command (recommended)
 
 ```powershell
-npm --prefix "$env:USERPROFILE\.dsh\profiles\web" install "github:zp96324511/dsh-active-sessions"
-# pin a version: ... "github:zp96324511/dsh-active-sessions#v0.1.0"
+dsh plugin --profile web add https://github.com/zp96324511/dsh-active-sessions/releases/latest/download/dsh-active-sessions.tgz
 ```
 
-Then append `"dsh-active-sessions"` to `dsh.profile.bundles` in the profile's `package.json`:
+`dsh plugin add` appends the package to `dsh.profile.bundles` on its own — no manifest editing. Then **restart the dsh Web Host** (it registers a projection, a storage domain, a remote service and the update routes). Client-only edits in `client.js` hot-swap without a restart.
 
-```json
-"bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app", "...", "dsh-active-sessions"]
+Pin a version by swapping the URL for `releases/download/v0.2.1/dsh-active-sessions-0.2.1.tgz`. Without a `dsh` shim:
+
+```powershell
+node "$env:USERPROFILE\AppData\Local\Author Software\nvm\installs\v26.10.0\node_modules\@deepseek-ai\dsh\lib\bin.js" plugin --profile web add <tarball-url>
 ```
 
-and **restart the dsh Web Host** — the host half registers a projection, a storage domain and a remote service. Client-only edits in `client.js` hot-swap without a restart.
+### Updates
+
+A version chip sits at the right of the group header:
+
+| Chip | Meaning | Opens |
+|---|---|---|
+| `v0.2.1` | up to date | check again / show channel |
+| `v0.2.1 ↑` | newer release available | upgrade in place / check again |
+| `v0.2.1 ⟳` | installed, restart pending | restart the host / manual instructions |
+| `v0.2.1 ?` | channel unreachable | the reason |
+
+Upgrades run `dsh plugin add <new tarball>` in a subprocess: in place, keeping the pnpm lockfile and the `engines` pre-check, and a failure leaves the existing install untouched. Restarts go through `respawn.cjs`, which waits for the old PID to exit, waits for the port to free up, then relaunches the same `--profile` / `--port` / environment. Job records land in `$DSH_HOME/storages/dsh-active-sessions-update.json`; an install interrupted by a reload is reported as failed rather than "running" forever.
+
+The channel is derived from how the plugin was installed:
+
+| Installed as | Channel |
+|---|---|
+| Release tarball URL | that repo's `releases/latest/download/channel.json` (tagged URLs also resolve to latest, so the channel never freezes at an old tag) |
+| GitHub release page tgz | `releases/latest/download/channel.json` |
+| Tarball next to a `channel.json` | that directory |
+| `file:` / `link:` | **in-place upgrade refused** — no version to compare, the chip explains why |
+| `github:` / git | **in-place upgrade refused** — it points at a branch tree |
+
+A `file:` junction is therefore for development, not for exercising the update UI. To try the whole chain locally, run `npm run channel` + `npm run channel:serve` and install from `http://127.0.0.1:10600/dsh-active-sessions-<version>.tgz`.
+
+To force a channel (for example so a local checkout still gets the update UI):
+
+```yaml
+- id: active-sessions
+  name: dsh-active-sessions
+  config:
+    update:
+      github: zp96324511/dsh-active-sessions   # or manifestUrl: https://…/channel.json
+      registry: https://registry.npmjs.org
+      checkIntervalMs: 21600000                 # cached check result, 6 hours by default
+      timeoutMs: 8000                           # per-request timeout
+      upgradeTimeoutMs: 900000                  # install subprocess timeout, 15 minutes
+      restart:
+        mode: respawn                           # respawn | exit | none
+        port: 0                                 # 0 = infer from the command line
+```
 
 ### Local development (directory junction)
 
@@ -83,10 +124,10 @@ A `file:` install becomes a directory junction, so source edits take effect imme
 ```powershell
 cd C:\data\projects\dsh-active-sessions
 npm pack
-npm --prefix C:\Users\win10\.dsh\profiles\web install --no-audit "file:C:\data\projects\dsh-active-sessions\dsh-active-sessions-0.1.0.tgz"
+npm --prefix C:\Users\win10\.dsh\profiles\web install --no-audit "file:C:\data\projects\dsh-active-sessions\dsh-active-sessions-0.2.1.tgz"
 ```
 
-Uninstall: `npm --prefix C:\Users\win10\.dsh\profiles\web uninstall dsh-active-sessions`, drop the bundle entry, restart.
+Uninstall: `dsh plugin --profile web remove dsh-active-sessions` (or `npm … uninstall dsh-active-sessions`), drop the bundle entry, restart.
 
 ## Data
 

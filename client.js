@@ -187,6 +187,20 @@ window.__ModuleLoader__.load({
         panelFallback: '侧栏结构不兼容，已启用独立面板',
         dataUnavailable: '会话数据来源暂不可用',
         groupLabel: '正在活跃会话',
+        update: '插件更新',
+        checking: '正在检查更新…',
+        checkUpdate: '检查更新',
+        updateFailed: '检查更新失败',
+        updateUnavailable: '无法读取更新渠道',
+        upToDate: '已是最新版本',
+        updateAvailable: '有新版本',
+        restartRequired: '已安装，重启宿主后生效',
+        updating: '正在安装…',
+        updated: '安装完成',
+        restarting: '正在重启…',
+        restartManual: '请手动重启 dsh Web Host',
+        upgrade: '升级到',
+        restart: '重启服务',
       },
       en: {
         title: 'Active now',
@@ -213,6 +227,20 @@ window.__ModuleLoader__.load({
         panelFallback: 'The sidebar layout is incompatible; the standalone panel is in use',
         dataUnavailable: 'Session data is unavailable right now',
         groupLabel: 'Active sessions',
+        update: 'Plugin update',
+        checking: 'Checking for updates…',
+        checkUpdate: 'Check for updates',
+        updateFailed: 'The update check failed',
+        updateUnavailable: 'The update channel could not be read',
+        upToDate: 'Up to date',
+        updateAvailable: 'New version available',
+        restartRequired: 'Installed — restart the host to apply',
+        updating: 'Installing…',
+        updated: 'Installed',
+        restarting: 'Restarting…',
+        restartManual: 'Restart the dsh Web Host manually',
+        upgrade: 'Upgrade to',
+        restart: 'Restart service',
       },
     };
 
@@ -680,6 +708,30 @@ window.__ModuleLoader__.load({
       '.dsh-as-row:hover .dsh-as-sub,.dsh-as-row:focus-visible .dsh-as-sub{display:none}',
       '.dsh-as-row:hover .dsh-as-actions,.dsh-as-row:focus-visible .dsh-as-actions{display:flex}',
       '.dsh-as-empty{padding:6px;font-size:12px;color:var(--dsw-alias-label-tertiary,rgba(128,128,128,.8))}',
+      '.dsh-as-ver{flex:none;padding:0 5px;border-radius:999px;font-size:10px;line-height:16px;cursor:pointer;',
+      'font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-tertiary,rgba(128,128,128,.8));',
+      'border:1px solid var(--dsw-alias-border-s,rgba(128,128,128,.24))}',
+      '.dsh-as-ver:hover{color:var(--dsw-alias-label-primary,inherit);',
+      'background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.14))}',
+      '.dsh-as-ver[data-state="available"]{color:var(--dsw-alias-state-success-primary,#2ea043);',
+      'border-color:var(--dsw-alias-state-success-primary,#2ea043)}',
+      '.dsh-as-ver[data-state="restart"]{color:var(--dsw-alias-state-business-primary,#247bbf);',
+      'border-color:var(--dsw-alias-state-business-primary,#247bbf)}',
+      '.dsh-as-ver[data-state="unknown"]{opacity:.7}',
+      '.dsh-as-upd{display:flex;flex-direction:column;gap:6px;margin:2px 6px 6px;padding:8px;border-radius:var(--dsw-radius-md,8px);',
+      'background:var(--dsw-alias-bg-skeleton,rgba(128,128,128,.12));font-size:11px;line-height:16px;',
+      'color:var(--dsw-alias-label-secondary,rgba(128,128,128,.95))}',
+      '.dsh-as-upd-line{overflow-wrap:anywhere}',
+      '.dsh-as-upd-actions{display:flex;flex-wrap:wrap;gap:6px}',
+      '.dsh-as-upd-btn{padding:2px 8px;border-radius:var(--dsw-radius-sm,6px);cursor:pointer;font-size:11px;line-height:16px;',
+      'border:1px solid var(--dsw-alias-border-s,rgba(128,128,128,.3));',
+      'background:transparent;color:var(--dsw-alias-label-secondary,rgba(128,128,128,.95))}',
+      '.dsh-as-upd-btn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.16));',
+      'color:var(--dsw-alias-label-primary,inherit)}',
+      '.dsh-as-upd-btn[data-primary="true"]{border-color:transparent;',
+      'background:var(--dsw-alias-state-business-primary,#247bbf);color:#fff}',
+      '.dsh-as-upd-btn:disabled{opacity:.5;cursor:default}',
+      '.dsh-as-upd-msg{color:var(--dsw-alias-label-tertiary,rgba(128,128,128,.85));overflow-wrap:anywhere}',
       '.dsh-as-panel{display:flex;flex-direction:column;gap:8px;height:100%;min-height:0;padding:12px 16px;box-sizing:border-box}',
       '.dsh-as-panel .dsh-as-list{flex:1 1 auto;overflow-y:auto}',
       '.dsh-as-panel .dsh-as-row{font-size:14px}',
@@ -764,6 +816,37 @@ window.__ModuleLoader__.load({
           }
         }
 
+        /* ---- Update channel ---- */
+
+        /* Served by the host half on the same origin: a relative path keeps
+           working behind whatever prefix the GUI is published under. */
+        const UPDATE_ROOT = '/plugins/dsh-active-sessions';
+
+        async function updateRequest(path, { method = 'GET', body } = {}) {
+          const response = await fetch(`${UPDATE_ROOT}${path}`, {
+            method,
+            headers: { 'content-type': 'application/json', accept: 'application/json' },
+            body: body === undefined ? undefined : JSON.stringify(body),
+            credentials: 'same-origin',
+          });
+          const text = await response.text();
+          let parsed;
+          try {
+            parsed = text === '' ? {} : JSON.parse(text);
+          } catch {
+            parsed = { ok: false, error: text.slice(0, 200) };
+          }
+          if (!response.ok) {
+            return { ok: false, error: parsed?.error ?? `${response.status} ${response.statusText}` };
+          }
+          return parsed;
+        }
+
+        function normalizeUpdateInfo(info) {
+          if (info === null || typeof info !== 'object') return { ok: false, error: 'the update channel returned nothing usable' };
+          return info;
+        }
+
         /* ---- Locale ---- */
         let t = (key) => DICT.zh[key] ?? key;
         try {
@@ -846,6 +929,13 @@ window.__ModuleLoader__.load({
           const [focusedId, setFocusedId] = useState(null);
           const rowRefs = useRef(new Map());
 
+          /* Update channel state. `null` means "not read yet": the chip only
+             advertises a version once a check has actually answered. */
+          const [updateInfo, setUpdateInfo] = useState(null);
+          const [updateBusy, setUpdateBusy] = useState(false);
+          const [updateOpen, setUpdateOpen] = useState(false);
+          const [updateMsg, setUpdateMsg] = useState('');
+
           /* Relative times refresh on their own; nothing else needs a timer. */
           useEffect(() => {
             const timer = window.setInterval(() => setNow(Date.now()), 30000);
@@ -904,6 +994,75 @@ window.__ModuleLoader__.load({
             window.addEventListener('storage', onStorage);
             return () => window.removeEventListener('storage', onStorage);
           }, []);
+
+          /* Read the update channel once per page load. The Host caches the
+             answer for `update.checkIntervalMs`, so this costs one request. */
+          useEffect(() => {
+            let cancelled = false;
+            const read = async () => {
+              try {
+                const info = normalizeUpdateInfo(await updateRequest('/update'));
+                if (!cancelled) setUpdateInfo(info);
+              } catch (error) {
+                if (!cancelled) setUpdateInfo({ ok: false, error: String(error?.message ?? error) });
+              }
+            };
+            void read();
+            return () => {
+              cancelled = true;
+            };
+          }, []);
+
+          const checkForUpdate = useCallback(async () => {
+            setUpdateBusy(true);
+            setUpdateMsg('');
+            try {
+              const info = normalizeUpdateInfo(await updateRequest('/update?force=1'));
+              setUpdateInfo(info);
+              if (info.ok !== true) setUpdateMsg(info.error ?? t('updateFailed'));
+              else if (info.hasUpdate !== true) setUpdateMsg(t('upToDate'));
+            } catch (error) {
+              setUpdateMsg(`${t('updateFailed')} ${String(error?.message ?? error)}`);
+            } finally {
+              setUpdateBusy(false);
+            }
+          }, [t]);
+
+          const runUpgrade = useCallback(async () => {
+            setUpdateBusy(true);
+            setUpdateMsg(t('updating'));
+            try {
+              const result = await updateRequest('/update/upgrade', {
+                method: 'POST',
+                body: updateInfo?.latest === undefined ? {} : { version: updateInfo.latest },
+              });
+              if (result?.ok === true) {
+                setUpdateMsg(t('updated'));
+                setUpdateInfo((previous) => (previous === null
+                  ? previous
+                  : { ...previous, hasUpdate: false, restartRequired: result.restartRequired === true }));
+              } else {
+                setUpdateMsg(result?.error ?? t('updateFailed'));
+              }
+            } catch (error) {
+              setUpdateMsg(String(error?.message ?? error));
+            } finally {
+              setUpdateBusy(false);
+            }
+          }, [t, updateInfo]);
+
+          const runRestart = useCallback(async () => {
+            setUpdateBusy(true);
+            setUpdateMsg(t('restarting'));
+            try {
+              const result = await updateRequest('/update/restart', { method: 'POST' });
+              if (result?.ok !== true) setUpdateMsg(result?.error ?? t('restartManual'));
+            } catch (error) {
+              setUpdateMsg(`${t('restartManual')} ${String(error?.message ?? error)}`);
+            } finally {
+              setUpdateBusy(false);
+            }
+          }, [t]);
 
           const patchPrefs = useCallback((patch) => {
             setPrefs((previous) => {
@@ -1085,6 +1244,78 @@ window.__ModuleLoader__.load({
           if (hooksMissing && mode === 'sidebar') return null;
 
           const collapsed = prefs.collapsed;
+
+          /* ---- Update chip + popover ---- */
+
+          const updateAvailable = updateInfo?.hasUpdate === true;
+          const needsRestart = updateInfo?.restartRequired === true;
+          const updateVisible = updateAvailable || needsRestart;
+          const loadedVersion = updateInfo?.loaded ?? updateInfo?.current;
+          const versionText = loadedVersion === undefined || loadedVersion === null
+            ? ''
+            : `v${String(loadedVersion)}`;
+
+          const updateStatusText = updateInfo === null
+            ? t('checking')
+            : updateInfo.ok !== true
+              ? (updateInfo.error ?? t('updateUnavailable'))
+              : updateAvailable
+                ? `${t('updateAvailable')} v${String(updateInfo.latest)}`
+                : needsRestart
+                  ? t('restartRequired')
+                  : t('upToDate');
+
+          const toggleUpdate = (event) => {
+            event.stopPropagation();
+            setUpdateOpen((open) => !open);
+          };
+
+          const versionChip = updateInfo === null || versionText === ''
+            ? null
+            : h('span', {
+              className: 'dsh-as-ver',
+              'data-state': updateAvailable ? 'available' : needsRestart ? 'restart' : updateInfo.ok === false ? 'unknown' : 'current',
+              role: 'button',
+              tabIndex: 0,
+              title: updateStatusText,
+              'aria-label': updateStatusText,
+              onClick: toggleUpdate,
+              onKeyDown: (event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                toggleUpdate(event);
+              },
+            }, updateAvailable ? `${versionText} ↑` : needsRestart ? `${versionText} ⟳` : versionText);
+
+          const updatePanel = updateOpen === false ? null : h('div', {
+            className: 'dsh-as-upd',
+            role: 'group',
+            'aria-label': t('update'),
+          },
+          h('div', { className: 'dsh-as-upd-line' }, updateStatusText),
+          h('div', { className: 'dsh-as-upd-actions' },
+            h('button', {
+              type: 'button',
+              className: 'dsh-as-upd-btn',
+              disabled: updateBusy,
+              onClick: checkForUpdate,
+            }, t('checkUpdate')),
+            updateAvailable ? h('button', {
+              type: 'button',
+              className: 'dsh-as-upd-btn',
+              'data-primary': 'true',
+              disabled: updateBusy,
+              onClick: runUpgrade,
+            }, `${t('upgrade')} v${String(updateInfo.latest)}`) : null,
+            needsRestart ? h('button', {
+              type: 'button',
+              className: 'dsh-as-upd-btn',
+              'data-primary': 'true',
+              disabled: updateBusy,
+              onClick: runRestart,
+            }, t('restart')) : null),
+          updateMsg === '' ? null : h('div', { className: 'dsh-as-upd-msg' }, updateMsg));
+
           const header = h('div', {
             className: 'dsh-as-head',
             role: 'button',
@@ -1098,6 +1329,7 @@ window.__ModuleLoader__.load({
           h('span', { className: 'dsh-as-chevron', 'data-collapsed': collapsed ? 'true' : 'false', 'aria-hidden': 'true' }, '▾'),
           h('span', { className: 'dsh-as-title' }, t('title')),
           waitingCount > 0 ? h('span', { className: 'dsh-as-count' }, String(waitingCount)) : null,
+          versionChip,
           h('span', { className: 'dsh-as-spacer' }),
           clearableRows.length > 0 ? h('span', { className: 'dsh-as-hbtns' },
             h(IconButton, { glyph: '✓', label: t('ackAll'), onClick: acknowledgeAll }),
@@ -1146,11 +1378,15 @@ window.__ModuleLoader__.load({
             'data-dsh-active-group': 'true',
           },
           header,
+          updatePanel,
           collapsed ? null : h('div', { className: 'dsh-as-list', role: 'list', style: listStyle },
-            rows.length === 0 ? h('div', { className: 'dsh-as-empty' }, t('empty')) : body));
+            rows.length === 0
+              ? (updateVisible ? null : h('div', { className: 'dsh-as-empty' }, t('empty')))
+              : body));
 
-          /* Empty group: render nothing at all (no placeholder, no gap). */
-          if (mode === 'sidebar' && rows.length === 0) return null;
+          /* Empty group: render nothing at all (no placeholder, no gap) — unless
+             the only thing to say is "there is a new version". */
+          if (mode === 'sidebar' && rows.length === 0 && updateVisible === false) return null;
 
           if (mode !== 'panel') return group;
 

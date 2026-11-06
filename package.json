@@ -1,6 +1,6 @@
 {
   "name": "dsh-active-sessions",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "type": "module",
   "description": "侧栏顶部固定「正在活跃」分组：跨项目聚合等待你回复 / 正在生成 / 轮次失败未确认 / 轮次完成未确认的会话，点击直达，已验收状态按 turn 序号跨设备持久。",
   "license": "MIT",
@@ -16,6 +16,8 @@
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
+    "./update": "./update.js",
+    "./respawn": "./respawn.cjs",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./locale/*.json": "./locale/*.json",
     "./package.json": "./package.json"
@@ -23,6 +25,8 @@
   "files": [
     "index.js",
     "client.js",
+    "update.js",
+    "respawn.cjs",
     "cordis.patch.yml",
     "locale/*.json",
     "README.md",
@@ -63,8 +67,10 @@
     }
   },
   "scripts": {
-    "check": "node --check index.js && node --check client.js && npm run test",
-    "test": "node --test test/"
+    "check": "node scripts/check-manifest.mjs && node --check index.js && node --check client.js && node --check update.js && node --check respawn.cjs && npm run test",
+    "test": "node --test test/",
+    "channel": "node scripts/publish-channel.mjs",
+    "channel:serve": "node scripts/serve-channel.cjs"
   },
   "dsh": {
     "bundle": {
