@@ -1,0 +1,82 @@
+{
+  "name": "dsh-active-sessions",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "侧栏顶部固定「正在活跃」分组：跨项目聚合等待你回复 / 正在生成 / 轮次失败未确认 / 轮次完成未确认的会话，点击直达，已验收状态按 turn 序号跨设备持久。",
+  "license": "MIT",
+  "author": "zp96324511",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zp96324511/dsh-active-sessions.git"
+  },
+  "bugs": {
+    "url": "https://github.com/zp96324511/dsh-active-sessions/issues"
+  },
+  "homepage": "https://github.com/zp96324511/dsh-active-sessions#readme",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./locale/*.json": "./locale/*.json",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "README.md",
+    "README.zh.md",
+    "CHANGELOG.md"
+  ],
+  "keywords": [
+    "deepseek",
+    "harness",
+    "dsh",
+    "dsh-plugin",
+    "active-sessions",
+    "sidebar",
+    "unread"
+  ],
+  "engines": {
+    "dsh": ">=0.2.0-rc.2",
+    "node": ">=20"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-storage-domain": "*",
+    "@deepseek-ai/dsh-typert-protocol": "*",
+    "@deepseek-ai/schemastery": "*",
+    "zod": "*"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-storage-domain": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-typert-protocol": {
+      "optional": true
+    },
+    "@deepseek-ai/schemastery": {
+      "optional": true
+    },
+    "zod": {
+      "optional": true
+    }
+  },
+  "scripts": {
+    "check": "node --check index.js && node --check client.js && npm run test",
+    "test": "node --test test/"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-workspace",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ]
+    }
+  }
+}
