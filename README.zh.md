@@ -108,6 +108,11 @@ dsh plugin --profile web add https://github.com/zp96324511/dsh-active-sessions/r
 node "$env:USERPROFILE\AppData\Local\Author Software\nvm\installs\v26.10.0\node_modules\@deepseek-ai\dsh\lib\bin.js" plugin --profile web add <tarball-url>
 ```
 
+**注意**：升级不要重复执行上面那条 `latest/download` 命令——pnpm 看到 profile 里的依赖串没变，会直接跳过解析（`Lockfile is up to date, resolution step is skipped`），装完还是旧版本。升级有两条正路：
+
+- 点分组标题右侧的 `↑` / 胶囊里的「升级」（内部用的是 `channel.json` 里带版本号的 URL，spec 变了才会真的换包）；
+- 或者手动带版本号装一次，例如 `.../releases/download/v0.3.0/dsh-active-sessions.tgz`。
+
 ### 之后：自带更新
 
 分组标题右侧有版本胶囊：

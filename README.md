@@ -101,6 +101,8 @@ Pin a version by swapping the URL for `releases/download/v0.2.1/dsh-active-sessi
 node "$env:USERPROFILE\AppData\Local\Author Software\nvm\installs\v26.10.0\node_modules\@deepseek-ai\dsh\lib\bin.js" plugin --profile web add <tarball-url>
 ```
 
+**Do not upgrade by re-running the `latest/download` command**: pnpm sees an unchanged dependency spec and skips resolution entirely (`Lockfile is up to date, resolution step is skipped`), leaving the old version installed. Upgrade through the version chip (its upgrade uses the versioned URL from `channel.json`, so the spec actually changes), or install a versioned URL by hand, e.g. `.../releases/download/v0.3.0/dsh-active-sessions.tgz`.
+
 ### Updates
 
 A version chip sits at the right of the group header:
