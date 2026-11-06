@@ -35,12 +35,28 @@ jobs:
             grep -qx "package/$file" listing.txt || { echo "missing package/$file"; exit 1; }
           done
 
-      - name: Install into a throwaway profile
-        env:
-          DSH_HOME: ${{ runner.temp }}/dsh-home
+      # A tarball can be well formed and still be unusable as a package: this
+      # installs it the way a consumer would and checks what actually lands.
+      - name: Install the tarball into a scratch directory
         run: |
           TARBALL=$(node -e "console.log(require('./pack.json')[0].filename)")
-          npx -y --package @deepseek-ai/dsh dsh plugin --profile web add "$PWD/$TARBALL"
+          SCRATCH="$RUNNER_TEMP/consumer"
+          mkdir -p "$SCRATCH"
+          cd "$SCRATCH"
+          npm init -y > /dev/null
+          npm install --no-audit --no-fund "$OLDPWD/$TARBALL" > /dev/null
+          node -e '
+            const { readFileSync } = require("node:fs");
+            const pkg = require("./node_modules/dsh-active-sessions/package.json");
+            for (const file of ["index.js", "client.js", "update.js", "respawn.cjs", "cordis.patch.yml"]) {
+              readFileSync(`./node_modules/dsh-active-sessions/${file}`);
+            }
+            console.log(`installed ${pkg.name}@${pkg.version}`);
+          '
+
+      # A real profile install needs a DSH installation with its own resolver, so
+      # it runs on the maintainer machine (npm run channel + a local host) rather
+      # than on a bare runner where the @deepseek-ai packages are not published.
 
       - uses: actions/upload-artifact@v4
         with:
