@@ -163,7 +163,7 @@ window.__ModuleLoader__.load({
      * ------------------------------------------------------------------ */
     const DICT = {
       zh: {
-        title: '正在活跃',
+        title: '活跃会话',
         expand: '展开',
         collapse: '收起',
         waitingApproval: '等待审批',
@@ -188,7 +188,7 @@ window.__ModuleLoader__.load({
         daysAgo: '{count} 天前',
         panelFallback: '侧栏结构不兼容，已启用独立面板',
         dataUnavailable: '会话数据来源暂不可用',
-        groupLabel: '正在活跃会话',
+        groupLabel: '活跃会话',
         update: '插件更新',
         checking: '正在检查更新…',
         checkUpdate: '检查更新',
@@ -400,7 +400,7 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * Derive the visible rows of the "正在活跃" group.
+     * Derive the visible rows of the "活跃会话" group.
      *
      * One Session appears at most once, in its highest-precedence bucket:
      * waiting > running > drafted > failed-unread > done-unread. Finished
