@@ -5,7 +5,7 @@
  * Session UI status, but it cannot see *why a turn ended* for a Session the
  * user never opened: `lastAgentError` and `promptError` live on a Session
  * snapshot that only exists while the Session is retained. So the two durable
- * facts behind the "正在活跃" group are produced here:
+ * facts behind the "活跃会话" group are produced here:
  *
  * 1. `activeSessions` Session projection — per Session, the sequence number of
  *    the last turn (`turn/start.seq`), whether that turn is running, ended

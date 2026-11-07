@@ -205,7 +205,7 @@ window.__ModuleLoader__.load({
         restart: '重启服务',
       },
       en: {
-        title: 'Active now',
+        title: 'Active sessions',
         expand: 'Expand',
         collapse: 'Collapse',
         waitingApproval: 'Waiting for approval',
