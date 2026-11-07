@@ -834,9 +834,22 @@ window.__ModuleLoader__.load({
       '.dsh-as-head:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.12))}',
       '.dsh-as-head:focus-visible,.dsh-as-row:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid ',
       'var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,#247bbf));outline-offset:-2px}',
-      '.dsh-as-chevron{font-size:10px;line-height:1;color:var(--dsw-alias-label-tertiary,rgba(128,128,128,.7));',
-      'transition:transform .12s ease}',
-      '.dsh-as-chevron[data-collapsed="true"]{transform:rotate(-90deg)}',
+      /* The leading slot mirrors a workspace row: a 16px line glyph at rest
+         that turns into the expand/collapse chevron on hover or focus. */
+      '.dsh-as-slot{flex:none;display:inline-flex;align-items:center;justify-content:center;width:16px;height:20px;',
+      'color:var(--dsw-alias-label-tertiary,rgba(128,128,128,.7))}',
+      '.dsh-as-logo,.dsh-as-toggle{display:inline-flex;align-items:center;justify-content:center}',
+      '.dsh-as-toggle{display:none;color:var(--dsw-alias-label-caption,rgba(128,128,128,.8));transform:rotate(0deg);',
+      'transition:transform .15s ease}',
+      '.dsh-as-toggle[data-collapsed="false"]{transform:rotate(90deg)}',
+      '.dsh-as-head:hover .dsh-as-logo,.dsh-as-head:focus-visible .dsh-as-logo,.dsh-as-head:focus-within .dsh-as-logo{display:none}',
+      '.dsh-as-head:hover .dsh-as-toggle,.dsh-as-head:focus-visible .dsh-as-toggle,.dsh-as-head:focus-within .dsh-as-toggle{display:inline-flex}',
+      '.dsh-as-touchcue{display:none;align-items:center;margin-left:3px;vertical-align:middle;',
+      'color:var(--dsw-alias-label-caption,rgba(128,128,128,.8));transform:rotate(0deg);transition:transform .15s ease}',
+      '.dsh-as-touchcue[data-collapsed="false"]{transform:rotate(90deg)}',
+      '@media (hover: none){.dsh-as-touchcue{display:inline-flex}}',
+      '@media (prefers-reduced-motion: reduce){.dsh-as-touchcue{transition:none}}',
+      '@media (prefers-reduced-motion: reduce){.dsh-as-toggle{transition:none}}',
       '.dsh-as-title{font-size:12px;font-weight:600;letter-spacing:.02em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       '.dsh-as-count{min-width:16px;height:16px;padding:0 4px;border-radius:8px;font-size:10px;line-height:16px;',
       'text-align:center;font-variant-numeric:tabular-nums;background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.18));',
@@ -932,6 +945,47 @@ window.__ModuleLoader__.load({
 
     /** Placeholder selector hook: keeps the hook call count stable without a store. */
     const NO_HOOK = (select) => select(EMPTY_LIST_STATE);
+
+    /**
+     * The group's mark, drawn in the sidebar's own idiom: a 16px box, one 1px
+     * `currentColor` stroke, no fill — the same vocabulary as the folder glyph
+     * in front of a workspace row. The frame gives the mark the folder's visual
+     * weight at this size; the trace inside marks the group as live activity
+     * rather than another workspace.
+     */
+    function ActiveSessionsGlyph() {
+      return h('svg', {
+        width: 16,
+        height: 16,
+        viewBox: '0 0 16 16',
+        fill: 'none',
+        stroke: 'currentColor',
+        strokeWidth: 1,
+        strokeLinecap: 'round',
+        strokeLinejoin: 'round',
+        'aria-hidden': 'true',
+        focusable: 'false',
+      },
+      h('path', { d: 'M4.4 2.6h7.2c1 0 1.8.8 1.8 1.8v7.2c0 1-.8 1.8-1.8 1.8H4.4c-1 0-1.8-.8-1.8-1.8V4.4c0-1 .8-1.8 1.8-1.8Z' }),
+      h('path', { d: 'M4.9 8h1.5l1-2.5 1.5 5 1-2.5h1.3' }));
+    }
+
+    /** Expand/collapse affordance, revealed where the mark sits. */
+    function ActiveSessionsToggleGlyph() {
+      return h('svg', {
+        width: 14,
+        height: 14,
+        viewBox: '0 0 16 16',
+        fill: 'none',
+        stroke: 'currentColor',
+        strokeWidth: 1.4,
+        strokeLinecap: 'round',
+        strokeLinejoin: 'round',
+        'aria-hidden': 'true',
+        focusable: 'false',
+      },
+      h('path', { d: 'M6.1 4.2 10 8l-3.9 3.8' }));
+    }
 
     /** One hover action button. */
     function IconButton(props) {
@@ -1556,8 +1610,21 @@ window.__ModuleLoader__.load({
             onClick: toggleCollapsed,
             onKeyDown: onHeaderKeyDown,
           },
-          h('span', { className: 'dsh-as-chevron', 'data-collapsed': collapsed ? 'true' : 'false', 'aria-hidden': 'true' }, '▾'),
-          h('span', { className: 'dsh-as-title' }, t('title')),
+          h('span', { className: 'dsh-as-slot', 'aria-hidden': 'true' },
+            h('span', { className: 'dsh-as-logo' }, h(ActiveSessionsGlyph)),
+            h('span', {
+              className: 'dsh-as-toggle',
+              'data-collapsed': collapsed ? 'true' : 'false',
+            }, h(ActiveSessionsToggleGlyph))),
+          h('span', { className: 'dsh-as-title' },
+            t('title'),
+            /* Touch has no hover to swap the mark for the chevron, so the
+               indicator sits after the title where it is always visible. */
+            h('span', {
+              className: 'dsh-as-touchcue',
+              'data-collapsed': collapsed ? 'true' : 'false',
+              'aria-hidden': 'true',
+            }, h(ActiveSessionsToggleGlyph))),
           waitingCount > 0 ? h('span', { className: 'dsh-as-count' }, String(waitingCount)) : null,
           versionChip,
           h('span', { className: 'dsh-as-spacer' }),
