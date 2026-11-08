@@ -844,11 +844,6 @@ window.__ModuleLoader__.load({
       '.dsh-as-toggle[data-collapsed="false"]{transform:rotate(90deg)}',
       '.dsh-as-head:hover .dsh-as-logo,.dsh-as-head:focus-visible .dsh-as-logo,.dsh-as-head:focus-within .dsh-as-logo{display:none}',
       '.dsh-as-head:hover .dsh-as-toggle,.dsh-as-head:focus-visible .dsh-as-toggle,.dsh-as-head:focus-within .dsh-as-toggle{display:inline-flex}',
-      '.dsh-as-touchcue{display:none;align-items:center;margin-left:3px;vertical-align:middle;',
-      'color:var(--dsw-alias-label-caption,rgba(128,128,128,.8));transform:rotate(0deg);transition:transform .15s ease}',
-      '.dsh-as-touchcue[data-collapsed="false"]{transform:rotate(90deg)}',
-      '@media (hover: none){.dsh-as-touchcue{display:inline-flex}}',
-      '@media (prefers-reduced-motion: reduce){.dsh-as-touchcue{transition:none}}',
       '@media (prefers-reduced-motion: reduce){.dsh-as-toggle{transition:none}}',
       '.dsh-as-title{font-size:12px;font-weight:600;letter-spacing:.02em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       '.dsh-as-count{min-width:16px;height:16px;padding:0 4px;border-radius:8px;font-size:10px;line-height:16px;',
@@ -1616,15 +1611,7 @@ window.__ModuleLoader__.load({
               className: 'dsh-as-toggle',
               'data-collapsed': collapsed ? 'true' : 'false',
             }, h(ActiveSessionsToggleGlyph))),
-          h('span', { className: 'dsh-as-title' },
-            t('title'),
-            /* Touch has no hover to swap the mark for the chevron, so the
-               indicator sits after the title where it is always visible. */
-            h('span', {
-              className: 'dsh-as-touchcue',
-              'data-collapsed': collapsed ? 'true' : 'false',
-              'aria-hidden': 'true',
-            }, h(ActiveSessionsToggleGlyph))),
+          h('span', { className: 'dsh-as-title' }, t('title')),
           waitingCount > 0 ? h('span', { className: 'dsh-as-count' }, String(waitingCount)) : null,
           versionChip,
           h('span', { className: 'dsh-as-spacer' }),
