@@ -85,7 +85,7 @@ Since 0.2.3 this plugin ships the missing element itself: a 1×1, `opacity:0`, u
 
 ## Install
 
-The host profile lives at `~/.dsh/profiles/web` (`C:\Users\win10\.dsh\profiles\web` on Windows).
+The host profile lives at `$DSH_HOME/profiles/web` (default `~/.dsh/profiles/web`).
 
 ### One command (recommended)
 

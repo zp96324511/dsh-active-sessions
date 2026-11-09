@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { EventEmitter } from 'node:events'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
@@ -10,7 +10,7 @@ process.env.DSH_HOME = home
 
 const update = await import('../update.js')
 
-const { classifySpec, compareVersions, createUpdater, createUpdateRoutes, isNewer, resolveChannel, satisfiesRange } = update
+const { classifySpec, compareVersions, createUpdater, createUpdateRoutes, findProfile, isNewer, resolveChannel, resolveDshHome, satisfiesRange } = update
 
 const PROFILE_DIR = join(home, 'profiles', 'web')
 const PACKAGE_VERSION = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version
@@ -156,6 +156,60 @@ test('version helpers compare release and prerelease orderings', () => {
   assert.equal(satisfiesRange('^0.2.0', '0.3.0'), false)
   assert.equal(satisfiesRange('~0.2.1', '1.0.0'), false)
   assert.equal(satisfiesRange('*', '9.9.9'), true)
+})
+
+/** Set DSH_HOME for one assertion, then put the previous value back. */
+function withDshHome(value, run) {
+  const saved = process.env.DSH_HOME
+  try {
+    process.env.DSH_HOME = value
+    return run()
+  } finally {
+    if (saved === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = saved
+  }
+}
+
+test('resolveDshHome expands a ~/ prefix from DSH_HOME', () => {
+  withDshHome('~/x', () => {
+    const resolved = resolveDshHome()
+    assert.equal(resolved, join(homedir(), 'x'))
+    assert.equal(resolved.includes('~'), false)
+  })
+})
+
+test('resolveDshHome expands a Windows ~\\ prefix from DSH_HOME', () => {
+  withDshHome('~\\x', () => {
+    const resolved = resolveDshHome()
+    assert.equal(resolved, join(homedir(), 'x'))
+    assert.equal(resolved.includes('~'), false)
+  })
+})
+
+test('resolveDshHome falls back to ~/.dsh when DSH_HOME is blank', () => {
+  withDshHome('   ', () => {
+    assert.equal(resolveDshHome(), join(homedir(), '.dsh'))
+  })
+})
+
+test('findProfile ignores a trailing separator in DSH_HOME', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-active-sessions-home-'))
+  const profileDir = join(root, 'profiles', 'web')
+  try {
+    mkdirSync(profileDir, { recursive: true })
+    writeFileSync(join(profileDir, 'package.json'), '{}\n')
+    for (const trailing of ['\\', '/']) {
+      withDshHome(`${root}${trailing}`, () => {
+        assert.equal(resolveDshHome(), root)
+        const profile = findProfile({}, 'web')
+        assert.ok(profile, `profile must be found with a trailing ${JSON.stringify(trailing)}`)
+        assert.equal(profile.dir, profileDir)
+        assert.doesNotMatch(profile.dir, /[\\/]{2}/)
+      })
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })
 
 test('check translates a channel document into an upgrade decision', async () => {

@@ -2,6 +2,14 @@
 
 本文件格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.4.3] - 2026-11-10
+
+### 变更
+
+- `resolveDshHome()` 补齐 `~` 展开：`~`、`~/x`、`~\x` 都按 DSH 本体的 `expandHomePath` 解析到用户主目录；仍然先 trim `DSH_HOME`，空白值回退 `~/.dsh`，其余交给 `path.resolve()`。
+- README 与 README.zh 的 profile 位置改为 `$DSH_HOME/profiles/web`（默认 `~/.dsh/profiles/web`），不再把 `~/.dsh` 写成唯一路径，并去掉写死的 Windows 用户目录示例。
+- `test/update.test.mjs` 新增回归用例：`~/` 与 `~\` 展开、空白 `DSH_HOME` 回退、`DSH_HOME` 带尾部分隔符时 `findProfile` 不产生重复分隔符。
+
 ## [0.4.2] - 2026-11-09
 
 ### 变更

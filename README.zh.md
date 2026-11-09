@@ -92,7 +92,7 @@ ack 表初始是空的，而库里已经有几千个早就结束的历史会话�
 
 ## 安装
 
-宿主 profile 位于 `~/.dsh/profiles/web`（Windows 上是 `C:\Users\win10\.dsh\profiles\web`）。
+宿主 profile 位于 `$DSH_HOME/profiles/web`（默认 `~/.dsh/profiles/web`）。
 
 ### 一条命令（推荐）
 

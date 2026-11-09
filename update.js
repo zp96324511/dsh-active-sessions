@@ -178,10 +178,14 @@ async function fetchJson(url, { timeout = FETCH_TIMEOUT_MS, headers = {}, fetch:
 
 /* ------------------------------------------------------------- environment */
 
-export function resolveDshHome() {
-  const override = process.env.DSH_HOME
-  if (typeof override === 'string' && override.trim() !== '') return resolve(override)
-  return join(homedir(), '.dsh')
+export function resolveDshHome(env = process.env) {
+  const override = env?.DSH_HOME
+  const value = typeof override === 'string' ? override.trim() : ''
+  if (value === '') return join(homedir(), '.dsh')
+  // Match the host's expandHomePath: `~`, `~/x` and `~\x` all name the home.
+  if (value === '~') return homedir()
+  if (value.startsWith('~/') || value.startsWith('~\\')) return resolve(join(homedir(), value.slice(2)))
+  return resolve(value)
 }
 
 export function resolveProfileName(argv = process.argv) {
