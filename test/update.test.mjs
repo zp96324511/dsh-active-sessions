@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { EventEmitter } from 'node:events'
 import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import test from 'node:test'
 
 const home = mkdtempSync(join(tmpdir(), 'dsh-active-sessions-update-'))
@@ -198,7 +198,9 @@ test('findProfile ignores a trailing separator in DSH_HOME', () => {
   try {
     mkdirSync(profileDir, { recursive: true })
     writeFileSync(join(profileDir, 'package.json'), '{}\n')
-    for (const trailing of ['\\', '/']) {
+    // A backslash is only a separator on Windows; POSIX treats it as a filename byte.
+    const separators = process.platform === 'win32' ? ['\\', '/'] : [sep]
+    for (const trailing of separators) {
       withDshHome(`${root}${trailing}`, () => {
         assert.equal(resolveDshHome(), root)
         const profile = findProfile({}, 'web')
