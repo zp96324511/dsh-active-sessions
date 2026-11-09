@@ -330,14 +330,11 @@ test('routes answer ping, version, update and 404', async () => {
   const missing = await call('GET', '/nope')
   assert.equal(missing.status, 404)
   assert.equal(missing.body.ok, false)
-})
 
-test('restart is refused when the channel disables it', async () => {
-  writeProfile()
-  const { updater } = makeUpdater({ config: { restart: { mode: 'none' } } })
-  const result = await updater.restart()
-  assert.equal(result.ok, false)
-  assert.match(String(result.error), /disabled/)
+  /* The plugin deliberately never restarts the host; the old endpoint must be gone. */
+  const restart = await call('POST', '/update/restart')
+  assert.equal(restart.status, 404)
+  assert.equal(restart.body.ok, false)
 })
 
 test.after(() => {

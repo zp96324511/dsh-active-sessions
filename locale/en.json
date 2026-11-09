@@ -34,10 +34,8 @@
   "upToDate": "Up to date",
   "updateAvailable": "New version available",
   "restartRequired": "Installed — restart the host to apply",
+  "restartHint": "The plugin never restarts the host: restart dsh Web Host the way you normally start it (terminal, script or service manager), keeping your usual arguments.",
   "updating": "Installing…",
   "updated": "Installed",
-  "restarting": "Restarting…",
-  "restartManual": "Restart the dsh Web Host manually",
-  "upgrade": "Upgrade to",
-  "restart": "Restart service"
+  "upgrade": "Upgrade to"
 }

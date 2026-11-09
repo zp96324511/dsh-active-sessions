@@ -80,11 +80,11 @@ export const Config = z.object({
     timeoutMs: z.number().default(8000),
     /** How long an installer run may take before it is abandoned. */
     upgradeTimeoutMs: z.number().default(15 * 60 * 1000),
-    /** How a restart is carried out: `respawn` (default), `exit`, or `none` to disable. */
-    restart: z.object({
-      mode: z.string().default('respawn'),
-      port: z.number().default(0),
-    }),
+    /* There is deliberately no `restart` option: the plugin installs the new
+     * files and stops. Restarting the host belongs to whoever launched it —
+     * that command line carries `--port`, `--public-url`, `--trusted-host` and
+     * environment the plugin never sees in full, so a relaunch from here would
+     * come back subtly different. The chip only asks the user to restart. */
   }),
 })
 

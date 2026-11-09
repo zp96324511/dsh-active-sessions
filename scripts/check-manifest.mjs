@@ -32,7 +32,7 @@ function read(relative) {
 }
 
 const manifest = JSON.parse(read('package.json') ?? '{}')
-const required = ['index.js', 'client.js', 'update.js', 'respawn.cjs', 'cordis.patch.yml', 'CHANGELOG.md', 'README.md', 'README.zh.md']
+const required = ['index.js', 'client.js', 'update.js', 'cordis.patch.yml', 'CHANGELOG.md', 'README.md', 'README.zh.md']
 
 for (const file of required) {
   if (!existsSync(join(root, file))) fail(`missing file: ${file}`)

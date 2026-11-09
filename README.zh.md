@@ -121,10 +121,10 @@ node "$env:USERPROFILE\AppData\Local\Author Software\nvm\installs\v26.10.0\node_
 |---|---|---|
 | `v0.2.1` | 已是最新 | 检查更新 / 查看渠道 |
 | `v0.2.1 ↑` | 有新版本 | 升级（就地换版本）/ 检查更新 |
-| `v0.2.1 ⟳` | 已升级，待重启 | 重启服务（自动拉起）/ 手动重启说明 |
+| `v0.2.1 ⟳` | 已升级，待重启 | 重启提示（插件只提示，不代你重启） |
 | `v0.2.1 ?` | 查不到渠道 | 显示失败原因 |
 
-升级走 `dsh plugin add <新 tarball>`：原地替换、继承 pnpm 锁与 `engines` 预检，失败不动现有安装。重启走 `respawn.cjs`：等旧进程退出、等端口释放、用同一套命令行拉起，重启后仍是原来的 `--profile` / `--port`。任务记录落 `$DSH_HOME/storages/dsh-active-sessions-update.json`，中途被打断会记成失败而不是永远「进行中」。
+升级走 `dsh plugin add <新 tarball>`：原地替换、继承 pnpm 锁与 `engines` 预检，失败不动现有安装。到此为止——插件不会重启宿主。宿主的命令行归启动方所有（`--port`、`--public-url`、`--trusted-host`、环境变量、服务管理器/脚本包装的其他参数），按 `process.argv` 重建命令行的重启并不可靠；胶囊只提示你手动重启。任务记录落 `$DSH_HOME/storages/dsh-active-sessions-update.json`，中途被打断会记成失败而不是永远「进行中」。
 
 更新渠道从**当前安装形态**自动推导，不需要配置：
 
@@ -150,9 +150,6 @@ node "$env:USERPROFILE\AppData\Local\Author Software\nvm\installs\v26.10.0\node_
       checkIntervalMs: 21600000                 # 检查结果缓存，默认 6 小时
       timeoutMs: 8000                           # 单次 HTTP 超时
       upgradeTimeoutMs: 900000                  # 升级子进程超时，默认 15 分钟
-      restart:
-        mode: respawn                           # respawn | exit | none
-        port: 0                                 # 0 = 从命令行推断
 ```
 
 ### 本地开发（目录联结）

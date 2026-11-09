@@ -31,7 +31,7 @@ jobs:
           TARBALL=$(node -e "console.log(require('./pack.json')[0].filename)")
           echo "tarball: $TARBALL"
           tar -tzf "$TARBALL" | tee listing.txt
-          for file in index.js client.js update.js respawn.cjs cordis.patch.yml; do
+          for file in index.js client.js update.js cordis.patch.yml; do
             grep -qx "package/$file" listing.txt || { echo "missing package/$file"; exit 1; }
           done
 
@@ -48,7 +48,7 @@ jobs:
           node -e '
             const { readFileSync } = require("node:fs");
             const pkg = require("./node_modules/dsh-active-sessions/package.json");
-            for (const file of ["index.js", "client.js", "update.js", "respawn.cjs", "cordis.patch.yml"]) {
+            for (const file of ["index.js", "client.js", "update.js", "cordis.patch.yml"]) {
               readFileSync(`./node_modules/dsh-active-sessions/${file}`);
             }
             console.log(`installed ${pkg.name}@${pkg.version}`);

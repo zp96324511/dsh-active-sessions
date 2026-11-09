@@ -197,12 +197,10 @@ window.__ModuleLoader__.load({
         upToDate: '已是最新版本',
         updateAvailable: '有新版本',
         restartRequired: '已安装，重启宿主后生效',
+        restartHint: '插件不会替你重启宿主：请用你平时启动它的方式（终端、脚本或服务管理器）重启 dsh Web Host，原有的启动参数保持不变。',
         updating: '正在安装…',
         updated: '安装完成',
-        restarting: '正在重启…',
-        restartManual: '请手动重启 dsh Web Host',
         upgrade: '升级到',
-        restart: '重启服务',
       },
       en: {
         title: 'Active sessions',
@@ -239,12 +237,10 @@ window.__ModuleLoader__.load({
         upToDate: 'Up to date',
         updateAvailable: 'New version available',
         restartRequired: 'Installed — restart the host to apply',
+        restartHint: 'The plugin never restarts the host: restart dsh Web Host the way you normally start it (terminal, script or service manager), keeping your usual arguments.',
         updating: 'Installing…',
         updated: 'Installed',
-        restarting: 'Restarting…',
-        restartManual: 'Restart the dsh Web Host manually',
         upgrade: 'Upgrade to',
-        restart: 'Restart service',
       },
     };
 
@@ -907,6 +903,7 @@ window.__ModuleLoader__.load({
       'background:var(--dsw-alias-state-business-primary,#247bbf);color:#fff}',
       '.dsh-as-upd-btn:disabled{opacity:.5;cursor:default}',
       '.dsh-as-upd-msg{color:var(--dsw-alias-label-tertiary,rgba(128,128,128,.85));overflow-wrap:anywhere}',
+      '.dsh-as-upd-hint{color:var(--dsw-alias-label-tertiary,rgba(128,128,128,.85));overflow-wrap:anywhere}',
       '.dsh-as-panel{display:flex;flex-direction:column;gap:8px;height:100%;min-height:0;padding:12px 16px;box-sizing:border-box}',
       '.dsh-as-panel .dsh-as-list{flex:1 1 auto;overflow-y:auto}',
       '.dsh-as-panel .dsh-as-row{font-size:14px}',
@@ -1313,19 +1310,6 @@ window.__ModuleLoader__.load({
             }
           }, [t, updateInfo]);
 
-          const runRestart = useCallback(async () => {
-            setUpdateBusy(true);
-            setUpdateMsg(t('restarting'));
-            try {
-              const result = await updateRequest('/update/restart', { method: 'POST' });
-              if (result?.ok !== true) setUpdateMsg(result?.error ?? t('restartManual'));
-            } catch (error) {
-              setUpdateMsg(`${t('restartManual')} ${String(error?.message ?? error)}`);
-            } finally {
-              setUpdateBusy(false);
-            }
-          }, [t]);
-
           const patchPrefs = useCallback((patch) => {
             setPrefs((previous) => {
               const next = { ...previous, ...patch };
@@ -1585,14 +1569,8 @@ window.__ModuleLoader__.load({
               'data-primary': 'true',
               disabled: updateBusy,
               onClick: runUpgrade,
-            }, `${t('upgrade')} v${String(updateInfo.latest)}`) : null,
-            needsRestart ? h('button', {
-              type: 'button',
-              className: 'dsh-as-upd-btn',
-              'data-primary': 'true',
-              disabled: updateBusy,
-              onClick: runRestart,
-            }, t('restart')) : null),
+            }, `${t('upgrade')} v${String(updateInfo.latest)}`) : null),
+          needsRestart ? h('div', { className: 'dsh-as-upd-hint' }, t('restartHint')) : null,
           updateMsg === '' ? null : h('div', { className: 'dsh-as-upd-msg' }, updateMsg));
 
           const header = h('div', {

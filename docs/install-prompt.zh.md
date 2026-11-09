@@ -109,7 +109,7 @@ node "<install>\lib\bin.js" plugin --profile $PROFILE add `
 $inst = "$home\profiles\$PROFILE\node_modules\dsh-active-sessions"
 Test-Path "$inst\package.json"                                   # True
 (Get-Content "$inst\package.json" -Raw | ConvertFrom-Json).version   # 应为当前最新版
-Get-ChildItem $inst -File | Select-Object Name                   # 应含 index.js client.js update.js respawn.cjs
+Get-ChildItem $inst -File | Select-Object Name                   # 应含 index.js client.js update.js
 (Get-Content "$home\profiles\$PROFILE\package.json" -Raw | ConvertFrom-Json) |
   Select-Object -ExpandProperty dependencies |
   Select-Object -Property 'dsh-active-sessions'                  # 应是该 tgz URL
@@ -123,7 +123,7 @@ Get-ChildItem $inst -File | Select-Object Name                   # 应含 index.
 
 坚守的规则：**宿主的半侧（投影注册、存储域、远程服务、更新路由）只在启动时加载**。只刷新页面、只重载客户端是不够的。
 
-重启时**沿用该机器原本的启动方式**（快捷方式 / 脚本 / 服务），命令行参数（`--host`、`--port`、`--public-url`、`--trusted-host`）保持原样。不要抄别的机器的参数：`--public-url` 和 `--trusted-host` 改错会导致移动端访问和反向代理失效。
+重启时**沿用该机器原本的启动方式**（快捷方式 / 脚本 / 服务），命令行参数（`--host`、`--port`、`--public-url`、`--trusted-host`）保持原样。不要抄别的机器的参数：`--public-url` 和 `--trusted-host` 改错会导致移动端访问和反向代理失效。插件自己升级后也只提示重启，不代你重启——理由相同：启动参数只有启动方知道。
 
 ⚠️ 重启会中断该宿主上正在进行的会话。若重启命令是你在当前会话里执行的，先告知用户。
 
@@ -201,7 +201,7 @@ Invoke-RestMethod "http://127.0.0.1:$PORT/plugins/dsh-active-sessions/update?for
 6. 归档该会话后，它从分组里消失。
 7. 刷新页面、换另一个浏览器打开 → 已读状态一致（acks 在宿主）。
 8. 手机/窄屏：视口 < 1024px 时宿主把侧栏收成导轨且**不渲染会话列表**，分组因此不存在（宿主行为，不是 bug）；用移动端抽屉把侧栏拉起来后，分组应出现在列表上方。触摸屏没有 hover，行右侧的 `→ ✓ ⊘` 应常驻显示。
-9. 升级胶囊：标题右侧显示 `v<版本>`；有新版本时变 `↑`，点击可就地升级，升级后再点「重启服务」由插件自己把宿主拉起来。
+9. 升级胶囊：标题右侧显示 `v<版本>`；有新版本时变 `↑`，点击可就地升级；升级完成后胶囊变 `⟳`，提示「已安装，重启宿主后生效」——插件只提示，不代你重启，按第 3 步的方式自行重启即可。
 
 ---
 

@@ -2,6 +2,14 @@
 
 本文件格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.4.2] - 2026-11-09
+
+### 变更
+
+- 升级后不再提供「重启服务」：删除 `/plugins/dsh-active-sessions/update/restart` 路由、`respawn.cjs` 与 `update.restart` 配置项。
+- 胶囊变 `⟳` 时只显示「已安装，重启宿主后生效」和一段手动重启提示，不再代用户拉起宿主。宿主的启动方式不归插件管：`--port`、`--public-url`、`--trusted-host`、环境变量以及服务管理器 / 脚本包装的额外参数都在启动方手里，按 `process.argv` 重建命令行重启并不可靠，还会中断该宿主上正在进行的会话。
+- `package.json` 去掉 `./respawn` 导出与 `respawn.cjs` 的 `files` 条目，`npm run check` 同步去掉 `node --check respawn.cjs`。
+
 ## [0.4.1] - 2026-11-08
 
 ### 修复

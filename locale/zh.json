@@ -34,10 +34,8 @@
   "upToDate": "已是最新版本",
   "updateAvailable": "有新版本",
   "restartRequired": "已安装，重启宿主后生效",
+  "restartHint": "插件不会替你重启宿主：请用你平时启动它的方式（终端、脚本或服务管理器）重启 dsh Web Host，原有的启动参数保持不变。",
   "updating": "正在安装…",
   "updated": "安装完成",
-  "restarting": "正在重启…",
-  "restartManual": "请手动重启 dsh Web Host",
-  "upgrade": "升级到",
-  "restart": "重启服务"
+  "upgrade": "升级到"
 }

@@ -5,8 +5,11 @@
  * plugin needs: a release tarball next to a `channel.json` manifest, an npm
  * registry entry, or an explicit `update.manifestUrl` / `update.github`.
  *
- * Nothing here touches the running host except `restart()`, which hands the job to
- * `respawn.cjs` so this process can exit and the same command line can come back.
+ * Nothing here touches the running host. Upgrades install into the active profile
+ * and stop there: the process that started the host owns its command line (extra
+ * flags, ports, `--public-url`, environment), so a relaunch reconstructed from
+ * `process.argv` would silently drop whatever the launcher added. The Client only
+ * reports "installed, restart the host to apply".
  */
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -28,7 +31,6 @@ const LOG_LIMIT = 48 * 1024
 const CHECK_TTL_MS = 6 * 60 * 60 * 1000
 const FETCH_TIMEOUT_MS = 8000
 const UPGRADE_TIMEOUT_MS = 15 * 60 * 1000
-const DEFAULT_WEB_PORT = 10550
 const JOB_TTL_MS = 24 * 60 * 60 * 1000
 
 /* ------------------------------------------------------------------ versions */
@@ -227,22 +229,6 @@ export function resolveRuntimeVersion(launcher = resolveLauncher()) {
     dir = parent
   }
   return undefined
-}
-
-export function resolvePort(argv = process.argv) {
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index]
-    if (arg === '--port') {
-      const next = Number(argv[index + 1])
-      if (Number.isFinite(next) && next > 0) return next
-    }
-    if (typeof arg === 'string' && arg.startsWith('--port=')) {
-      const next = Number(arg.slice('--port='.length))
-      if (Number.isFinite(next) && next > 0) return next
-    }
-  }
-  const fromEnv = Number(process.env.DSH_WEB_PORT ?? process.env.PORT)
-  return Number.isFinite(fromEnv) && fromEnv > 0 ? fromEnv : undefined
 }
 
 export function resolveRegistry(fallback = 'https://registry.npmjs.org/') {
@@ -637,33 +623,6 @@ export function createUpdater({ ctx, config = {}, logger = () => {}, spawn: spaw
     })
   }
 
-  async function restart() {
-    const mode = updateConfig.restart?.mode ?? 'respawn'
-    if (mode === 'none') return { ok: false, error: 'automatic restarts are disabled (update.restart.mode: none)' }
-
-    const command = launcher()
-    const payload = {
-      pid: process.pid,
-      argv: [command.command, ...command.leading, ...process.argv.slice(2)],
-      cwd: process.cwd(),
-      env: { ...process.env, DSH_HOME: resolveDshHome() },
-      port: updateConfig.restart?.port ?? resolvePort() ?? DEFAULT_WEB_PORT,
-      log: join(resolveDshHome(), 'storages', `${PACKAGE_NAME}-restart.log`),
-    }
-    const helper = join(HERE, 'respawn.cjs')
-    const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64')
-    const child = spawnProcess(process.execPath, [helper, encoded], { detached: true, stdio: 'ignore', windowsHide: true })
-    child.on('error', (error) => logger(`restart helper failed: ${String(error)}`))
-    child.unref()
-
-    if (mode === 'exit') {
-      setTimeout(() => process.exit(0), 250)
-    } else {
-      setTimeout(() => process.exit(0), 250)
-    }
-    return { ok: true, mode, port: payload.port }
-  }
-
   function dispose() {
     state.disposed = true
   }
@@ -675,7 +634,6 @@ export function createUpdater({ ctx, config = {}, logger = () => {}, spawn: spaw
     channel,
     check,
     upgrade,
-    restart,
     dispose,
     jobView,
     loadedVersion: LOADED_VERSION,
@@ -747,14 +705,6 @@ export function createUpdateRoutes(updater, { prefix = `/plugins/${PACKAGE_NAME}
         reply(res, 202, { ok: true, ...job })
       } catch (error) {
         reply(res, 409, { ok: false, error: String(error?.message ?? error) })
-      }
-      return true
-    }
-    if (route === '/update/restart' && req.method === 'POST') {
-      try {
-        reply(res, 200, await updater.restart())
-      } catch (error) {
-        reply(res, 500, { ok: false, error: String(error?.message ?? error) })
       }
       return true
     }

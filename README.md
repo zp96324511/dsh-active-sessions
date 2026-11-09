@@ -111,10 +111,10 @@ A version chip sits at the right of the group header:
 |---|---|---|
 | `v0.2.1` | up to date | check again / show channel |
 | `v0.2.1 ↑` | newer release available | upgrade in place / check again |
-| `v0.2.1 ⟳` | installed, restart pending | restart the host / manual instructions |
+| `v0.2.1 ⟳` | installed, restart pending | a reminder to restart the host yourself — the plugin never does it |
 | `v0.2.1 ?` | channel unreachable | the reason |
 
-Upgrades run `dsh plugin add <new tarball>` in a subprocess: in place, keeping the pnpm lockfile and the `engines` pre-check, and a failure leaves the existing install untouched. Restarts go through `respawn.cjs`, which waits for the old PID to exit, waits for the port to free up, then relaunches the same `--profile` / `--port` / environment. Job records land in `$DSH_HOME/storages/dsh-active-sessions-update.json`; an install interrupted by a reload is reported as failed rather than "running" forever.
+Upgrades run `dsh plugin add <new tarball>` in a subprocess: in place, keeping the pnpm lockfile and the `engines` pre-check, and a failure leaves the existing install untouched. That is where the plugin stops — it never restarts the host. The process that started the host owns its command line (`--port`, `--public-url`, `--trusted-host`, environment, service-manager wrappers), so a relaunch reconstructed from `process.argv` could come back with different settings; the chip only tells you to restart. Job records land in `$DSH_HOME/storages/dsh-active-sessions-update.json`; an install interrupted by a reload is reported as failed rather than "running" forever.
 
 The channel is derived from how the plugin was installed:
 
@@ -140,9 +140,6 @@ To force a channel (for example so a local checkout still gets the update UI):
       checkIntervalMs: 21600000                 # cached check result, 6 hours by default
       timeoutMs: 8000                           # per-request timeout
       upgradeTimeoutMs: 900000                  # install subprocess timeout, 15 minutes
-      restart:
-        mode: respawn                           # respawn | exit | none
-        port: 0                                 # 0 = infer from the command line
 ```
 
 ### Local development (directory junction)
