@@ -20,7 +20,7 @@ Inside a state, rows sort by `updatedAt` descending. Blank sessions, sub-session
 
 A parent whose background subagent is still running counts as **generating**, not as a finished turn: accepting a child ends the parent's turn (`turn/end` → `completed`) while the host keeps waiting for its descendants, and `api-session/status` only reflects whether the agent itself is running — it is already idle. The turn projection alone would therefore report "done" for work that is still going on. The row's copy is `Waiting for subagents` rather than `Generating…`, `⚙ N` still counts direct children, a running grandchild keeps every ancestor live too, and a finished turn that was already acknowledged stays listed while a child runs — running is a live state, not a notice.
 
-The block renders nothing at all when there is no active session.
+The block stays pinned even when nothing is active: the header remains and the list shows one muted `No active sessions` placeholder line instead of disappearing.
 
 ## Why "reviewed" is a turn number
 
@@ -252,7 +252,7 @@ The price is that it reads the whole log store once (5402 sessions / 77 MB here,
 7. Archive the session: the row disappears.
 8. Refresh: identical content. A second browser against the same host: same acks.
 9. Collapse the sidebar: the block hides without leaving a gap.
-10. With nothing active: the block does not exist at all.
+10. With nothing active: the block stays pinned and shows the muted `No active sessions` placeholder.
 11. Open the same host in a browser that never loaded this plugin: only the genuinely unreviewed few appear, not the whole history (the baseline migration ran — the host log shows `... B baselined in ...`).
 
 ## Troubleshooting

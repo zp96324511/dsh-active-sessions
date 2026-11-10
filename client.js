@@ -918,7 +918,13 @@ window.__ModuleLoader__.load({
          their own, and the subtitle gives up its space to them. */
       '@media (hover:none){.dsh-as-row .dsh-as-actions{display:flex}',
       '.dsh-as-row .dsh-as-sub{display:none}}',
-      '.dsh-as-empty{padding:6px;font-size:12px;color:var(--dsw-alias-label-tertiary,rgba(128,128,128,.8))}',
+      /* Resident empty state: same 32px rhythm and inset as a row, but no
+         hover, no cursor and the caption tone — it reads as a placeholder,
+         not as something to click. */
+      '.dsh-as-empty{display:flex;align-items:center;height:32px;padding:0 6px;',
+      'border-radius:var(--dsw-radius-md,8px);font-size:12px;line-height:20px;',
+      'color:var(--dsw-alias-label-caption,rgba(128,128,128,.7));opacity:.8;',
+      'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;user-select:none;pointer-events:none}',
       '.dsh-as-ver{flex:none;padding:0 5px;border-radius:999px;font-size:10px;line-height:16px;cursor:pointer;',
       'font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-tertiary,rgba(128,128,128,.8));',
       'border:1px solid var(--dsw-alias-border-s,rgba(128,128,128,.24))}',
@@ -1548,8 +1554,6 @@ window.__ModuleLoader__.load({
             }
           };
 
-          if (hooksMissing && mode === 'sidebar') return null;
-
           const collapsed = prefs.collapsed;
 
           /* ---- Update chip + popover ---- */
@@ -1680,6 +1684,12 @@ window.__ModuleLoader__.load({
             ? { flex: '1 1 auto', minHeight: 0 }
             : { maxHeight: `calc(min(${Math.max(96, prefs.heightPx)}px, 40vh) - 36px)` };
 
+          /* The group is resident: with nothing to show it keeps its header and
+             explains itself in place instead of vanishing. "No data source" is
+             a different claim from "nothing needs you", so it gets its own
+             line; the panel already carries the same note above the group. */
+          const emptyText = hooksMissing ? t('dataUnavailable') : t('empty');
+
           const group = h('div', {
             className: 'dsh-as-group',
             role: 'group',
@@ -1688,14 +1698,19 @@ window.__ModuleLoader__.load({
           },
           header,
           updatePanel,
-          collapsed ? null : h('div', { className: 'dsh-as-list', role: 'list', style: listStyle },
-            rows.length === 0
-              ? (updateVisible ? null : h('div', { className: 'dsh-as-empty' }, t('empty')))
-              : body));
-
-          /* Empty group: render nothing at all (no placeholder, no gap) — unless
-             the only thing to say is "there is a new version". */
-          if (mode === 'sidebar' && rows.length === 0 && updateVisible === false) return null;
+          collapsed ? null : h('div', {
+            className: 'dsh-as-list',
+            role: rows.length === 0 ? undefined : 'list',
+            style: listStyle,
+          },
+          rows.length === 0
+            ? (updateVisible || (mode === 'panel' && hooksMissing)
+              ? null
+              : h('div', {
+                className: 'dsh-as-empty',
+                'data-dsh-active-empty': hooksMissing ? 'unavailable' : 'true',
+              }, emptyText))
+            : body));
 
           if (mode !== 'panel') return group;
 
