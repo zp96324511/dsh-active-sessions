@@ -171,6 +171,7 @@ window.__ModuleLoader__.load({
         waitingPlan: '计划待审',
         waitingUnknown: '等待你处理',
         running: '正在生成…',
+        waitingSubagents: '等待子任务',
         failedUnread: '轮次失败 · 未查看',
         doneUnread: '已完成 · 未查看',
         drafted: '草稿未发送',
@@ -211,6 +212,7 @@ window.__ModuleLoader__.load({
         waitingPlan: 'Plan awaiting review',
         waitingUnknown: 'Waiting for you',
         running: 'Generating…',
+        waitingSubagents: 'Waiting for subagents',
         failedUnread: 'Turn failed · unread',
         doneUnread: 'Done · unread',
         drafted: 'Draft not sent',
@@ -405,6 +407,11 @@ window.__ModuleLoader__.load({
      * notices. A draft is not a notice either, but it is the user's own
      * unfinished work, so it ranks above the two "come back and review" buckets.
      *
+     * "Running" includes a Session whose own turn has ended but which still
+     * has a running subagent underneath it: dispatching a background child ends
+     * the parent turn immediately, so the projection alone would report the
+     * Session as finished while the work it asked for is still going on.
+     *
      * @param input - `{ list, statuses, workspaces, acked, ackedReady, drafts,
      *   openSessionId, hidden, snooze, now }`.
      * @returns rows sorted by bucket, then newest first.
@@ -431,15 +438,40 @@ window.__ModuleLoader__.load({
       const archived = new Set(Array.isArray(workspaces?.archivedSessionIds) ? workspaces.archivedSessionIds : []);
       const workspaceOf = buildSessionWorkspaceIndex(workspaces?.items);
 
-      /* Running direct subagents, counted on their parent: the child Session
-         never becomes a row of its own, it shows up as ⚙ N on the parent. */
-      const subagentsRunning = new Map();
-      for (const id of ids) {
-        const row = byId[id];
-        const parentId = row?.parentId;
+      /* Subagents belong to their parent Session: the child never becomes a row
+         of its own, it shows up as ⚙ N on the parent and keeps the parent live
+         while it runs. The child rows live in `byId` (the Host lists them), so
+         the parent chain is walked over the whole catalog, not just `ids`. */
+      const parentOf = new Map();
+      for (const id of Object.keys(byId)) {
+        const parentId = byId[id]?.parentId;
         if (parentId === undefined || parentId === null) continue;
-        if (readStatus(statuses, id).running !== true) continue;
+        parentOf.set(id, parentId);
+      }
+
+      /* A child counts as running under the same rule as a row: the status
+         store wins, and "no status yet" falls back to the list row's flag. */
+      const isLive = (id) => {
+        const status = readStatus(statuses, id);
+        return status.running === true || (status.running === undefined && byId[id]?.running === true);
+      };
+
+      const subagentsRunning = new Map();
+      const descendantsRunning = new Map();
+      for (const id of parentOf.keys()) {
+        if (!isLive(id)) continue;
+        const parentId = parentOf.get(id);
         subagentsRunning.set(parentId, (subagentsRunning.get(parentId) ?? 0) + 1);
+        /* A running grandchild keeps its own parent busy too, so mark every
+           ancestor, not just the direct parent. The chain is finite and a
+           malformed cycle is cut by `seen`. */
+        const seen = new Set([id]);
+        let ancestor = parentId;
+        while (ancestor !== undefined && ancestor !== null && !seen.has(ancestor)) {
+          seen.add(ancestor);
+          descendantsRunning.set(ancestor, (descendantsRunning.get(ancestor) ?? 0) + 1);
+          ancestor = parentOf.get(ancestor);
+        }
       }
 
       const rows = [];
@@ -461,6 +493,7 @@ window.__ModuleLoader__.load({
 
         let kind = null;
         let pendingKind;
+        let waitingOnSubagents = false;
         /* A turn the Host abandoned mid-flight is neither running nor finished;
            it is listed nowhere rather than invented as a result — but a draft
            the user left in that Session is still their own pending work. */
@@ -470,6 +503,12 @@ window.__ModuleLoader__.load({
           pendingKind = status.pendingInteraction.kind;
         } else if (running) {
           kind = 'running';
+        } else if ((descendantsRunning.get(id) ?? 0) > 0) {
+          /* The turn that dispatched a background subagent ended as soon as the
+             child was accepted, but the work it delegated is still running:
+             the Session is busy, not a finished turn to come back to. */
+          kind = 'running';
+          waitingOnSubagents = true;
         } else if (view !== undefined && view.lastTurn === 'running') {
           if (now - Number(row.updatedAt ?? 0) < STALE_TURN_MS) kind = 'running';
           else abandonedTurn = true;
@@ -506,6 +545,7 @@ window.__ModuleLoader__.load({
           updatedAt: Number(row.updatedAt ?? 0),
           workspaceTitle: workspaceOf.get(id)?.title,
           subagents: subagentsRunning.get(id) ?? 0,
+          waitingOnSubagents,
           pendingKind,
           draft: kind === 'drafted' ? draftSnippet : null,
           lastError: typeof view?.lastError === 'string' ? view.lastError : null,
@@ -1423,7 +1463,7 @@ window.__ModuleLoader__.load({
               const key = PENDING_COPY[String(row.pendingKind)];
               return key === undefined ? t('waitingUnknown') : t(key);
             }
-            if (row.kind === 'running') return t('running');
+            if (row.kind === 'running') return row.waitingOnSubagents === true ? t('waitingSubagents') : t('running');
             if (row.kind === 'drafted') return t('drafted');
             if (row.kind === 'failed') return t('failedUnread');
             return t('doneUnread');
@@ -1445,7 +1485,11 @@ window.__ModuleLoader__.load({
             if (row.kind === 'drafted') {
               return `${t('draftPrefix')}${String(row.draft ?? '')}`;
             }
-            const tail = row.kind === 'waiting' ? statusWordOf(row) : relativeOf(row.updatedAt);
+            /* A row that is live only because a subagent is running under it
+               has no generation of its own to timestamp: name the state. */
+            const tail = row.kind === 'waiting' || row.waitingOnSubagents === true
+              ? statusWordOf(row)
+              : relativeOf(row.updatedAt);
             const workspaceTitle = row.workspaceTitle;
             return typeof workspaceTitle === 'string' && workspaceTitle !== '' ? `${workspaceTitle} · ${tail}` : tail;
           };

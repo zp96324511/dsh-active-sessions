@@ -11,12 +11,14 @@ Each session appears once, with its highest-priority state.
 | Priority | State | Rule | Visual | Copy |
 |---|---|---|---|---|
 | 1 | Waiting on you | `status.pendingInteraction != null` | still orange dot | Waiting for approval / question / plan review (unknown kinds fall back to a generic label) |
-| 2 | Generating | `status.running === true` | pulsing accent dot | Generating… |
+| 2 | Generating | `status.running === true`, or a subagent underneath this session is still running | pulsing accent dot | Generating… / Waiting for subagents |
 | 3 | Draft not sent | this browser holds unsent composer text for the session | hollow dot | `Draft: <first 48 chars>` |
 | 4 | Failed, unreviewed | turn ended with an error, not acknowledged | red dot | Turn failed, not reviewed (error summary on hover) |
 | 5 | Done, unreviewed | turn completed, not acknowledged | green dot | Completed, not reviewed |
 
 Inside a state, rows sort by `updatedAt` descending. Blank sessions, sub-sessions (`parentId` / `origin === 'subagent'`) and archived sessions are excluded. A parent row shows `⚙ N` when it has N running direct children.
+
+A parent whose background subagent is still running counts as **generating**, not as a finished turn: accepting a child ends the parent's turn (`turn/end` → `completed`) while the host keeps waiting for its descendants, and `api-session/status` only reflects whether the agent itself is running — it is already idle. The turn projection alone would therefore report "done" for work that is still going on. The row's copy is `Waiting for subagents` rather than `Generating…`, `⚙ N` still counts direct children, a running grandchild keeps every ancestor live too, and a finished turn that was already acknowledged stays listed while a child runs — running is a live state, not a notice.
 
 The block renders nothing at all when there is no active session.
 

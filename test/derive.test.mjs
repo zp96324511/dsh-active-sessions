@@ -241,6 +241,117 @@ test('counts running direct subagents on the parent row', () => {
   assert.equal(rows[0].subagents, 2);
 });
 
+test('a parent waiting on a running subagent is live, not finished', () => {
+  /* The turn ends as soon as the background child is accepted: the projection
+     says "done" while the delegated work is still running. */
+  const list = listState([
+    { session: summary('parent', { updatedAt: 4000 }), projection: finished(3) },
+    { session: summary('child', { parentId: 'parent', updatedAt: 4000 }) },
+  ]);
+  const running = statusMap([
+    { session: { id: 'parent' }, status: { running: false, completionUnread: true } },
+    { session: { id: 'child' }, status: { running: true } },
+  ]);
+  const rows = deriveActiveRows({ list, statuses: running, workspaces: { items: [] }, now: 5000 });
+  assert.deepEqual(rows.map((row) => row.kind), ['running']);
+  assert.equal(rows[0].waitingOnSubagents, true);
+  assert.equal(rows[0].subagents, 1);
+
+  /* An already reviewed turn does not hide a Session that is still working. */
+  const reviewed = deriveActiveRows({
+    list, statuses: running, workspaces: { items: [] }, acked: { parent: 3 }, ackedReady: true, now: 5000,
+  });
+  assert.deepEqual(reviewed.map((row) => row.kind), ['running']);
+
+  /* Once the child settles the finished turn is a notice again. */
+  const settled = deriveActiveRows({
+    list,
+    statuses: statusMap([
+      { session: { id: 'parent' }, status: { running: false, completionUnread: true } },
+      { session: { id: 'child' }, status: { running: false } },
+    ]),
+    workspaces: { items: [] },
+    now: 5000,
+  });
+  assert.deepEqual(settled.map((row) => row.kind), ['done']);
+  assert.equal(settled[0].waitingOnSubagents, false);
+});
+
+test('a nested subagent keeps every ancestor live', () => {
+  const rows = deriveActiveRows({
+    list: listState([
+      { session: summary('root', { updatedAt: 4000 }), projection: finished(3) },
+      { session: summary('child', { parentId: 'root' }) },
+      { session: summary('grandchild', { parentId: 'child' }) },
+    ]),
+    statuses: statusMap([
+      { session: { id: 'root' }, status: { running: false, completionUnread: true } },
+      { session: { id: 'child' }, status: { running: false } },
+      { session: { id: 'grandchild' }, status: { running: true } },
+    ]),
+    workspaces: { items: [] },
+    now: 5000,
+  });
+  assert.deepEqual(rows.map((row) => row.id), ['root']);
+  assert.equal(rows[0].kind, 'running');
+  assert.equal(rows[0].waitingOnSubagents, true);
+});
+
+test('a live subagent outranks the stale-turn bound and the snooze window', () => {
+  /* The parent turn is old enough to read as abandoned, but the child proves
+     the Session is alive; running rows are never hidden by snooze either. */
+  const rows = deriveActiveRows({
+    list: listState([
+      { session: summary('parent', { updatedAt: 1_000_000 }), projection: RUNNING_TURN(9) },
+      { session: summary('child', { parentId: 'parent' }) },
+    ]),
+    statuses: statusMap([
+      { session: { id: 'parent' }, status: { running: false } },
+      { session: { id: 'child' }, status: { running: true } },
+    ]),
+    workspaces: { items: [] },
+    snooze: { parent: 10_000_000 },
+    now: 1_000_000 + 10 * 60_000,
+  });
+  assert.deepEqual(rows.map((row) => row.kind), ['running']);
+});
+
+test('a running child with no status yet falls back to its list row', () => {
+  const rows = deriveActiveRows({
+    list: listState([
+      { session: summary('parent', { updatedAt: 4000 }), projection: finished(3) },
+      { session: summary('child', { parentId: 'parent', running: true }) },
+    ]),
+    statuses: statusMap([
+      { session: { id: 'parent' }, status: { running: false, completionUnread: true } },
+    ]),
+    workspaces: { items: [] },
+    now: 5000,
+  });
+  assert.deepEqual(rows.map((row) => row.kind), ['running']);
+  assert.equal(rows[0].subagents, 1);
+});
+
+test('a running subagent outranks the previous turn failure', () => {
+  /* The Session is demonstrably busy: the child will settle and wake it, so
+     the failed turn is not the state it is in right now. A turn that fails
+     once nothing is left running reports `failed` again. */
+  const rows = deriveActiveRows({
+    list: listState([
+      { session: summary('parent', { updatedAt: 4000 }), projection: finished(3, 'failed', 'boom') },
+      { session: summary('child', { parentId: 'parent' }) },
+    ]),
+    statuses: statusMap([
+      { session: { id: 'parent' }, status: { running: false, completionUnread: true } },
+      { session: { id: 'child' }, status: { running: true } },
+    ]),
+    workspaces: { items: [] },
+    now: 5000,
+  });
+  assert.deepEqual(rows.map((row) => row.kind), ['running']);
+  assert.equal(rows[0].waitingOnSubagents, true);
+});
+
 test('falls back to completionUnread when the host projection is absent', () => {
   const rows = deriveActiveRows({
     list: listState([{ session: summary('s1', { updatedAt: 4000 }) }]),
