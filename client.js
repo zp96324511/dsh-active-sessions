@@ -872,8 +872,11 @@ window.__ModuleLoader__.load({
          The host mounts `listArea` 8px in from the column's left edge but
          flush against its right edge, so an even-looking card needs an
          uneven margin: 0 left, 8 right lands the card on the column's
-         midline instead of hugging the sidebar border. */
-      '.dsh-as-group{display:flex;flex-direction:column;flex:none;min-height:0;margin:2px 8px 8px 0;',
+         midline instead of hugging the sidebar border. The bottom gap stays
+         tight (5px): the list scrolls under its own top edge right below the
+         card, so extra space there reads as an empty dark strip between the
+         glow and the first row. */
+      '.dsh-as-group{display:flex;flex-direction:column;flex:none;min-height:0;margin:2px 8px 5px 0;',
       'padding:2px 4px 4px;border-radius:10px;',
       'background:color-mix(in srgb,var(--dsw-alias-label-primary) 5%,transparent);',
       'box-shadow:0 0 0 1px var(--dsw-alias-border-l1,rgba(128,128,128,.12)),',
