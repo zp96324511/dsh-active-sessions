@@ -863,8 +863,17 @@ window.__ModuleLoader__.load({
      * ------------------------------------------------------------------ */
     const STYLE_MARKER = 'dsh-active-sessions-style';
     const STYLE_TEXT = [
-      '.dsh-as-group{display:flex;flex-direction:column;flex:none;min-height:0;padding:0 4px 2px;',
-      'border-bottom:1px solid var(--dsw-alias-border-s,rgba(128,128,128,.16))}',
+      /* A card, not a rule: the group sits pinned above the tree, so its edge
+         has to read as the panel's own boundary rather than as one more row
+         separator. The fill and the shadow are both mixed from label-primary —
+         near-white in the dark theme, near-black in the light one — so one
+         declaration becomes a white glow in dark mode and a soft drop shadow
+         in light mode, without sniffing `data-ds-dark-theme`. */
+      '.dsh-as-group{display:flex;flex-direction:column;flex:none;min-height:0;margin:2px 4px 8px;',
+      'padding:2px 4px 4px;border-radius:10px;',
+      'background:color-mix(in srgb,var(--dsw-alias-label-primary) 5%,transparent);',
+      'box-shadow:0 0 0 1px var(--dsw-alias-border-l1,rgba(128,128,128,.12)),',
+      '0 6px 16px -10px color-mix(in srgb,var(--dsw-alias-label-primary) 40%,transparent)}',
       '.dsh-as-head{display:flex;align-items:center;gap:6px;height:32px;padding:0 6px;border-radius:var(--dsw-radius-sm,6px);',
       'cursor:pointer;user-select:none;color:var(--dsw-alias-label-secondary,rgba(128,128,128,.95))}',
       '.dsh-as-head:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.12))}',
@@ -920,8 +929,10 @@ window.__ModuleLoader__.load({
       '.dsh-as-row .dsh-as-sub{display:none}}',
       /* Resident empty state: same 32px rhythm and inset as a row, but no
          hover, no cursor and the caption tone — it reads as a placeholder,
-         not as something to click. */
-      '.dsh-as-empty{display:flex;align-items:center;height:32px;padding:0 6px;',
+         not as something to click. The line is centred in the list's content
+         box so `scrollbar-gutter` cannot bias it: the caption sits on the
+         panel's midline instead of hugging the row's left inset. */
+      '.dsh-as-empty{display:flex;align-items:center;justify-content:center;height:32px;padding:0 6px;',
       'border-radius:var(--dsw-radius-md,8px);font-size:12px;line-height:20px;',
       'color:var(--dsw-alias-label-caption,rgba(128,128,128,.7));opacity:.8;',
       'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;user-select:none;pointer-events:none}',

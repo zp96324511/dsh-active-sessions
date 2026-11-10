@@ -2,6 +2,13 @@
 
 本文件格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.4.6] - 2026-11-10
+
+### 变更
+
+- 「暂无活跃会话」占位行改为水平居中：`.dsh-as-empty` 补上 `justify-content:center`，文字落在列表内容区（扣除 `scrollbar-gutter` 预留位）的中线上，不再贴着行首的左内边距、与下方的会话行看起来像同一列。
+- 分组改为卡片式收边：`.dsh-as-group` 去掉了那条几乎看不见的 `border-bottom`（它引用的 `--dsw-alias-border-s` 在当前 DSH 主题里已不存在，只能回退成 16% 灰线），换成 5% `label-primary` 底色 + 1px `border-l1` 描边 + 圆角 10px + 底部投影。底色和投影都用 `color-mix()` 从 `--dsw-alias-label-primary` 混出：深色主题里它是近白色、表现成一层冷光，浅色主题里它是近黑色、表现成投影，因此同一份样式能同时照顾 DSH 的黑白两套主题。
+
 ## [0.4.5] - 2026-11-10
 
 ### 变更
