@@ -2,6 +2,12 @@
 
 本文件格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.4.7] - 2026-11-10
+
+### 修复
+
+- 分组卡片不再贴着侧栏右边线：宿主把 `listArea` 放在距侧栏左边缘 8px、右边缘 0 的位置，0.4.6 的 `margin:2px 4px 8px` 因此让卡片左边留 12px、右边只剩 4px，整块看起来偏右。改为 `margin:2px 8px 8px 0`，左右各留 8px，卡片正好落在侧栏中线上。
+
 ## [0.4.6] - 2026-11-10
 
 ### 变更

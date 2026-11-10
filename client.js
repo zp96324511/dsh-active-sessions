@@ -868,8 +868,12 @@ window.__ModuleLoader__.load({
          separator. The fill and the shadow are both mixed from label-primary —
          near-white in the dark theme, near-black in the light one — so one
          declaration becomes a white glow in dark mode and a soft drop shadow
-         in light mode, without sniffing `data-ds-dark-theme`. */
-      '.dsh-as-group{display:flex;flex-direction:column;flex:none;min-height:0;margin:2px 4px 8px;',
+         in light mode, without sniffing `data-ds-dark-theme`.
+         The host mounts `listArea` 8px in from the column's left edge but
+         flush against its right edge, so an even-looking card needs an
+         uneven margin: 0 left, 8 right lands the card on the column's
+         midline instead of hugging the sidebar border. */
+      '.dsh-as-group{display:flex;flex-direction:column;flex:none;min-height:0;margin:2px 8px 8px 0;',
       'padding:2px 4px 4px;border-radius:10px;',
       'background:color-mix(in srgb,var(--dsw-alias-label-primary) 5%,transparent);',
       'box-shadow:0 0 0 1px var(--dsw-alias-border-l1,rgba(128,128,128,.12)),',
