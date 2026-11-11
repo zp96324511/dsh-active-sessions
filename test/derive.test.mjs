@@ -24,15 +24,16 @@ function loadPure() {
   assert.ok(start >= 0 && end > start, 'client.js must keep its #region pure markers');
   const body = CLIENT_SOURCE.slice(start, end);
   const factory = new Function(`${body}
-    return { KIND_RANK, EMPTY_STATUS, readStatus, buildSessionWorkspaceIndex, relativeTimeKey,
-             deriveActiveRows, rowToAcknowledgeInView, STORAGE_KEY, readPrefs, draftSnippetOf, collectDrafts,
-             sameDrafts, DRAFT_KEY_PREFIX, currentSessionIdOf };`);
+    return { KIND_RANK, EMPTY_STATUS, readStatus, buildSessionWorkspaceIndex, workspaceGroupKeyOf,
+             relativeTimeKey, deriveActiveRows, rowToAcknowledgeInView, STORAGE_KEY, readPrefs,
+             draftSnippetOf, collectDrafts, sameDrafts, DRAFT_KEY_PREFIX, currentSessionIdOf };`);
   return factory();
 }
 
 const pure = loadPure();
 const {
-  deriveActiveRows, rowToAcknowledgeInView, relativeTimeKey, buildSessionWorkspaceIndex, KIND_RANK,
+  deriveActiveRows, rowToAcknowledgeInView, relativeTimeKey, buildSessionWorkspaceIndex,
+  workspaceGroupKeyOf, KIND_RANK,
   draftSnippetOf, collectDrafts, sameDrafts, DRAFT_KEY_PREFIX, currentSessionIdOf,
 } = pure;
 
@@ -81,11 +82,14 @@ function finished(turnSeq, lastTurn = 'done', lastError = null) {
 
 const RUNNING_TURN = (turnSeq) => ({ lastTurnSeq: turnSeq, lastTurn: 'running', lastError: null, endedAt: null });
 
-test('KIND_RANK puts whoever waits on the user first', () => {
+test('KIND_RANK puts whoever waits on the user first, resident pins last', () => {
   assert.ok(KIND_RANK.waiting < KIND_RANK.running);
   assert.ok(KIND_RANK.running < KIND_RANK.drafted);
   assert.ok(KIND_RANK.drafted < KIND_RANK.failed);
   assert.ok(KIND_RANK.failed < KIND_RANK.done);
+  /* Pins are resident, not urgent: they come after everything that needs a
+     decision or a review. */
+  assert.ok(KIND_RANK.done < KIND_RANK.pinned);
 });
 
 test('relativeTimeKey buckets by minute, hour and day', () => {
@@ -107,6 +111,17 @@ test('buildSessionWorkspaceIndex maps every listed session to its workspace', ()
   assert.equal(index.get('s3').title, 'beta');
   assert.equal(index.get('missing'), undefined);
   assert.equal(buildSessionWorkspaceIndex(undefined).size, 0);
+});
+
+test('workspaceGroupKeyOf names the browser group a Session is listed under', () => {
+  const items = [
+    { workspaceId: 'w1', sessionIds: ['s1', 's2'] },
+    { workspaceId: 'w2', sessionIds: ['s3'] },
+  ];
+  assert.equal(workspaceGroupKeyOf(items, 's3'), 'w2');
+  /* A Session no Workspace accounts for lives in Ungrouped, key "". */
+  assert.equal(workspaceGroupKeyOf(items, 'other'), '');
+  assert.equal(workspaceGroupKeyOf(undefined, 's1'), '');
 });
 
 test('excludes blank, subagent, child and archived sessions', () => {
@@ -789,4 +804,124 @@ test('the Session retained by the main view is the one on screen', () => {
   assert.equal(currentSessionIdOf({ ids: ['gone'], byId: { s1: { id: 's1', retainedBy: { mainView: 1 } } } }), null);
   /* A malformed summary must not throw while the list is still loading. */
   assert.equal(currentSessionIdOf({ ids: ['s1', 's2'], byId: { s1: null, s2: { id: 's2', retainedBy: { mainView: 1 } } } }), 's2');
+})
+
+/* -------------------------------------------------------------------------- *
+ * Resident pins: the Sessions pinned in any Workspace stay listed here.
+ * -------------------------------------------------------------------------- */
+
+test('a pinned Session with no active state stays listed, in pin order', () => {
+  const rows = deriveActiveRows({
+    list: listState([
+      { session: summary('done-one', { updatedAt: 3000 }), projection: finished(5) },
+      { session: summary('idle-pin', { updatedAt: 1000 }) },
+      { session: summary('other-pin', { updatedAt: 2000 }) },
+    ]),
+    statuses: {},
+    workspaces: {
+      items: [
+        { workspaceId: 'w1', title: 'alpha', sessionIds: ['done-one'] },
+        { workspaceId: 'w2', title: 'beta', sessionIds: ['idle-pin', 'other-pin'] },
+      ],
+      pinnedSessionIds: ['other-pin', 'idle-pin'],
+    },
+    acked: {},
+    ackedReady: true,
+    now: 10_000,
+  });
+  assert.deepEqual(rows.map((row) => row.id), ['done-one', 'other-pin', 'idle-pin']);
+  assert.equal(rows[1].kind, 'pinned');
+  assert.equal(rows[1].pinned, true);
+  assert.equal(rows[1].ackable, false);
+  assert.equal(rows[1].workspaceTitle, 'beta');
+})
+
+test('a pinned Session is listed once, in its active bucket', () => {
+  const rows = deriveActiveRows({
+    list: listState([{ session: summary('pin'), projection: RUNNING_TURN(3) }]),
+    statuses: statusMap([{ session: { id: 'pin' }, status: { running: true } }]),
+    workspaces: { items: [], pinnedSessionIds: ['pin'] },
+    now: 5000,
+  });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].kind, 'running');
+  assert.equal(rows[0].pinned, true);
+})
+
+test('a pinned Session falls back to the resident row once its turn is read', () => {
+  const input = {
+    list: listState([{ session: summary('pin', { updatedAt: 2000 }), projection: finished(9) }]),
+    statuses: statusMap([{ session: { id: 'pin' }, status: { running: false, completionUnread: true } }]),
+    workspaces: { items: [], pinnedSessionIds: ['pin'] },
+    ackedReady: true,
+  };
+  const unread = deriveActiveRows({ ...input, acked: {}, now: 10_000 });
+  assert.deepEqual(unread.map((row) => [row.kind, row.pinned]), [['done', true]]);
+  const read = deriveActiveRows({ ...input, acked: { pin: 9 }, now: 10_000 });
+  assert.deepEqual(read.map((row) => [row.kind, row.pinned, row.ackable]), [['pinned', true, false]]);
+})
+
+test('an unreadable ack map keeps a pinned Session resident instead of dropping it', () => {
+  const rows = deriveActiveRows({
+    list: listState([{ session: summary('pin'), projection: finished(12) }]),
+    statuses: {},
+    workspaces: { items: [], pinnedSessionIds: ['pin'] },
+    ackedReady: false,
+    now: 10_000,
+  });
+  assert.deepEqual(rows.map((row) => [row.kind, row.pinned]), [['pinned', true]]);
+  assert.equal(rows[0].turnSeq, 12);
+})
+
+test('snooze does not hide a pinned Session', () => {
+  const rows = deriveActiveRows({
+    list: listState([
+      { session: summary('pin'), projection: finished(4) },
+      { session: summary('plain'), projection: finished(4) },
+    ]),
+    statuses: {},
+    workspaces: { items: [], pinnedSessionIds: ['pin'] },
+    acked: {},
+    ackedReady: true,
+    snooze: { pin: 20_000, plain: 20_000 },
+    now: 10_000,
+  });
+  assert.deepEqual(rows.map((row) => row.id), ['pin']);
+  assert.equal(rows[0].kind, 'done');
+})
+
+test('resident rows skip every unlistable Session, but never the open one', () => {
+  const rows = deriveActiveRows({
+    list: listState([
+      { session: summary('open') },
+      { session: summary('archived') },
+      { session: summary('child', { parentId: 'parent' }) },
+      { session: summary('sub', { origin: 'subagent' }) },
+      { session: summary('blank', { blank: true }) },
+      { session: summary('kept') },
+    ]),
+    statuses: {},
+    workspaces: {
+      items: [],
+      archivedSessionIds: ['archived'],
+      pinnedSessionIds: ['open', 'archived', 'child', 'sub', 'blank', 'missing', 'kept'],
+    },
+    openSessionId: 'open',
+    now: 5000,
+  });
+  /* The open Session stays listed too: the resident row doubles as the
+     ordering anchor and as the way back when the user switches away. */
+  assert.deepEqual(rows.map((row) => row.id), ['open', 'kept']);
+  assert.deepEqual(rows.map((row) => row.kind), ['pinned', 'pinned']);
+})
+
+test('a pinned Session that is still running shows its live row while open', () => {
+  const rows = deriveActiveRows({
+    list: listState([{ session: summary('pin'), projection: RUNNING_TURN(8) }]),
+    statuses: statusMap([{ session: { id: 'pin' }, status: { running: true } }]),
+    workspaces: { items: [], pinnedSessionIds: ['pin'] },
+    openSessionId: 'pin',
+    now: 5000,
+  });
+  assert.deepEqual(rows.map((row) => [row.id, row.kind]), [['pin', 'running']]);
 })

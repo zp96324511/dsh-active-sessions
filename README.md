@@ -15,12 +15,15 @@ Each session appears once, with its highest-priority state.
 | 3 | Draft not sent | this browser holds unsent composer text for the session | hollow dot | `Draft: <first 48 chars>` |
 | 4 | Failed, unreviewed | turn ended with an error, not acknowledged | red dot | Turn failed, not reviewed (error summary on hover) |
 | 5 | Done, unreviewed | turn completed, not acknowledged | green dot | Completed, not reviewed |
+| 6 | Pinned (resident) | listed in the host's `pinnedSessionIds` and no higher-priority state applies | hollow dot + 📌 | Pinned |
 
-Inside a state, rows sort by `updatedAt` descending. Blank sessions, sub-sessions (`parentId` / `origin === 'subagent'`) and archived sessions are excluded. A parent row shows `⚙ N` when it has N running direct children.
+Inside a state, rows sort by `updatedAt` descending; the resident bucket follows pin order (most recently pinned first) and comes after every active state — a resident entry never pushes work that needs you down. Blank sessions, sub-sessions (`parentId` / `origin === 'subagent'`) and archived sessions are excluded. A parent row shows `⚙ N` when it has N running direct children.
 
 A parent whose background subagent is still running counts as **generating**, not as a finished turn: accepting a child ends the parent's turn (`turn/end` → `completed`) while the host keeps waiting for its descendants, and `api-session/status` only reflects whether the agent itself is running — it is already idle. The turn projection alone would therefore report "done" for work that is still going on. The row's copy is `Waiting for background work` rather than `Generating…`, `⚙ N` still counts direct children, a running grandchild keeps every ancestor live too, and a finished turn that was already acknowledged stays listed while a child runs — running is a live state, not a notice.
 
 Background jobs count as the same kind of work: `run_in_background` `pwsh`/`bash` calls and detached terminal sends append `job/registered` to the session log and `job/settled` when they end. A session with an unsettled job (a Flask server left running, say) stays **generating** after its turn ends, with the same `Waiting for background work` copy, no `✓`, and no snooze; once the job settles the row returns to the ordinary done/failed-unreviewed state. A child kept alive by its own job keeps the parent live too, so `⚙ N` still counts it. Orphaned `job/registered` events from a hard kill are filtered by this host process's start time (a job cannot outlive the process that spawned it), and `job` events inherited by a forked session are filtered by `owner`, so only the session that actually holds the job stays live.
+
+Pinned sessions are resident: DSH's pin set is registry-wide (not per workspace), and the plugin lists every pinned session after all the active buckets as a permanent entry point. A pinned session that already has an active state (waiting, generating, draft, failed, done-unread) still appears once, in that state, with 📌 before its title; once the turn is marked reviewed or would be snoozed, the row falls back to the `Pinned` bucket instead of disappearing. A resident row has no `✓` and no `⌛` (snoozing would only hide the notice while the row stays put, which reads as a broken snooze), and clicking it only opens. A pinned session that is currently on screen keeps its resident row too — it is the way back after switching to another session.
 
 The block stays pinned even when nothing is active: the header remains and the list shows one muted `No active sessions` placeholder line instead of disappearing.
 
@@ -64,14 +67,16 @@ The host already persists every composer draft in localStorage under `dsh.conver
 
 | Action | Effect |
 |---|---|
-| Click a row | Open the session and mark it reviewed (a row with no finished turn — draft, generating, waiting on you, or waiting on subagents/background jobs — only opens) |
-| Hover ✓ on a row | Mark reviewed without opening (a row with no finished turn has no ✓) |
-| Hover ⌛ on a row | Snooze for one hour (failed / done / draft rows) |
+| Click a row | Open the session and mark it reviewed (a row with no finished turn — draft, generating, waiting on you, waiting on subagents/background jobs — and a resident pin only open); the workspace list below also expands and scrolls to that session |
+| Hover ✓ on a row | Mark reviewed without opening (a row with no finished turn, or a resident pin, has no ✓) |
+| Hover ⌛ on a row | Snooze for one hour (failed / done / draft rows; a resident pin has no ⌛) |
 | Header ✓ / ⌛ | Acknowledge or snooze all current failed + done rows (draft rows are never bulk-acknowledged) |
 | Click the header | Collapse / expand (remembered locally) |
-| Keyboard | On the header or a row: `↑/↓` move, `Enter` open, `Shift+Enter` mark reviewed (a row with no finished turn opens instead), `Esc` blur |
+| Keyboard | On the header or a row: `↑/↓` move, `Enter` open (and reveal it in the workspace list), `Shift+Enter` mark reviewed (a row with no finished turn opens instead), `Esc` blur |
 
 The header badge counts only sessions waiting on you. The block is capped at `min(320px, 40vh)` and scrolls internally beyond eight rows.
+
+Opening a row also reveals that session in the workspace list below: a folded Workspace group is expanded, a row past the group's default five-row watermark is rendered by clicking through "Show more", and the row is scrolled into view with `scrollIntoView({ block: 'nearest' })`. This drives the same DOM affordances as DSH's own search-result reveal (its internal `revealSessionId` is not exposed). When the sidebar is a rail, the phone drawer is closed, or the list is in flat mode there is no group to expand, so nothing happens.
 
 ## Mobile
 
@@ -258,6 +263,7 @@ The price is that it reads the whole log store once (5402 sessions / 77 MB here,
 9. Collapse the sidebar: the block hides without leaving a gap.
 10. With nothing active: the block stays pinned and shows the muted `No active sessions` placeholder.
 11. Open the same host in a browser that never loaded this plugin: only the genuinely unreviewed few appear, not the whole history (the baseline migration ran — the host log shows `... B baselined in ...`).
+12. Pin a session in any workspace: it appears at the top of the group (📌, hollow dot, "Pinned"); marking it reviewed leaves it listed, unpinning removes it; while it generates it appears once with 📌 before the title.
 
 ## Troubleshooting
 

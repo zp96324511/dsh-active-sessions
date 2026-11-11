@@ -8,6 +8,7 @@
   "waitingUnknown": "Waiting for you",
   "running": "Generating…",
   "waitingTasks": "Waiting for background work",
+  "pinned": "Pinned",
   "failedUnread": "Turn failed · unread",
   "doneUnread": "Done · unread",
   "drafted": "Draft not sent",

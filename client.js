@@ -172,6 +172,7 @@ window.__ModuleLoader__.load({
         waitingUnknown: '等待你处理',
         running: '正在生成…',
         waitingTasks: '等待子任务',
+        pinned: '已置顶',
         failedUnread: '轮次失败 · 未查看',
         doneUnread: '已完成 · 未查看',
         drafted: '草稿未发送',
@@ -213,6 +214,7 @@ window.__ModuleLoader__.load({
         waitingUnknown: 'Waiting for you',
         running: 'Generating…',
         waitingTasks: 'Waiting for background work',
+        pinned: 'Pinned',
         failedUnread: 'Turn failed · unread',
         doneUnread: 'Done · unread',
         drafted: 'Draft not sent',
@@ -249,8 +251,8 @@ window.__ModuleLoader__.load({
     /* #region pure */
     /* ---- Pure derivation (framework-free; covered by test/derive.test.mjs) ---- */
 
-    /** Bucket order: who needs the user first. */
-    const KIND_RANK = Object.freeze({ waiting: 0, running: 1, drafted: 2, failed: 3, done: 4 });
+    /** Bucket order: who needs the user first; resident pins come last. */
+    const KIND_RANK = Object.freeze({ waiting: 0, running: 1, drafted: 2, failed: 3, done: 4, pinned: 5 });
 
     /** Status value used when a Session has no status entry yet. */
     const EMPTY_STATUS = Object.freeze({ running: undefined, pendingInteraction: undefined, completionUnread: false });
@@ -282,6 +284,23 @@ window.__ModuleLoader__.load({
         }
       }
       return index;
+    }
+
+    /**
+     * Group key the workspace browser lists a Session under: its Workspace id,
+     * or the empty string for the Ungrouped bucket (the browser's
+     * `data-row-key="workspace:<key>"` convention).
+     * @param items - WorkspaceSnapshot.items.
+     * @param sessionId - Session to look up.
+     * @returns the group key.
+     */
+    function workspaceGroupKeyOf(items, sessionId) {
+      for (const item of Array.isArray(items) ? items : []) {
+        if (Array.isArray(item?.sessionIds) && item.sessionIds.includes(sessionId)) {
+          return String(item.workspaceId);
+        }
+      }
+      return '';
     }
 
     /**
@@ -422,9 +441,19 @@ window.__ModuleLoader__.load({
      * acknowledging it would put a ✓ on a row that cannot disappear. Opening it
      * only navigates.
      *
+     * Pinned Sessions are resident: the Host's pin set (`pinnedSessionIds`,
+     * registry-global in DSH) is listed after every active bucket, so a pinned
+     * Session is reachable from this group without a notice being raised for
+     * it. A pinned Session that already has an active row keeps that row (and
+     * is marked `pinned`); once that row is acknowledged or would be snoozed,
+     * it falls back to the `pinned` bucket instead of disappearing. `pinned`
+     * rows are never ackable and are never hidden by the local snooze. The
+     * resident row exists even for the Session currently on screen: it orders
+     * the list and is the shortcut back to it from any other Session.
+     *
      * @param input - `{ list, statuses, workspaces, acked, ackedReady, drafts,
      *   openSessionId, hidden, snooze, now }`.
-     * @returns rows sorted by bucket, then newest first.
+     * @returns rows sorted by bucket, then newest first (`pinned` by pin order).
      */
     function deriveActiveRows(input) {
       const list = input?.list;
@@ -447,6 +476,20 @@ window.__ModuleLoader__.load({
 
       const archived = new Set(Array.isArray(workspaces?.archivedSessionIds) ? workspaces.archivedSessionIds : []);
       const workspaceOf = buildSessionWorkspaceIndex(workspaces?.items);
+
+      /* DSH pins Sessions registry-wide (not per Workspace) and leads its
+         Workspace groups with them. This group has a different job — it is a
+         work queue — so the resident bucket comes last instead: every pinned
+         Session stays reachable without pushing a row that needs the user
+         down. Order inside the bucket is pin order (most recent first). */
+      const pinnedSessionIds = Array.isArray(workspaces?.pinnedSessionIds) ? workspaces.pinnedSessionIds : [];
+      const pinned = new Set();
+      const pinRank = new Map();
+      for (const pinnedId of pinnedSessionIds) {
+        if (typeof pinnedId !== 'string' || pinned.has(pinnedId)) continue;
+        pinRank.set(pinnedId, pinRank.size);
+        pinned.add(pinnedId);
+      }
 
       /* Subagents belong to their parent Session: the child never becomes a row
          of its own, it shows up as ⚙ N on the parent and keeps the parent live
@@ -519,6 +562,7 @@ window.__ModuleLoader__.load({
            row's own flag rather than reading it as false. */
         const running = status.running === true || (status.running === undefined && row.running === true);
         const jobs = view === undefined ? 0 : jobsOf(id);
+        const isPinned = pinned.has(id);
 
         let kind = null;
         let pendingKind;
@@ -556,17 +600,30 @@ window.__ModuleLoader__.load({
             kind = view !== undefined && view.lastTurn === 'failed' ? 'failed' : 'done';
           }
         }
-        if (kind === null) continue;
+        if (kind === null) {
+          /* A pinned Session is resident: with no active state to report it is
+             still listed, so this group doubles as the shortcut list for the
+             Sessions the user pinned in any Workspace. */
+          if (!isPinned) continue;
+          kind = 'pinned';
+        }
 
         if (kind === 'failed' || kind === 'done') {
           /* Without the Host's ack map a finished Session cannot be placed on
-             the read side of the line, so it is not listed at all. */
-          if (!ackedReady && view !== undefined) continue;
-          if (view !== undefined && lastTurnSeq >= 0 && lastTurnSeq <= ackSeq) continue;
+             the read side of the line; a pinned one falls back to its resident
+             row instead of disappearing. */
+          if (!ackedReady && view !== undefined) {
+            if (!isPinned) continue;
+            kind = 'pinned';
+          } else if (view !== undefined && lastTurnSeq >= 0 && lastTurnSeq <= ackSeq) {
+            if (!isPinned) continue;
+            kind = 'pinned';
+          }
         }
         /* Both review notices and drafts honour the local snooze; waiting and
-           running never do — they are live states. */
-        if (kind !== 'waiting' && kind !== 'running' && Number(snooze[id] ?? 0) > now) continue;
+           running never do — they are live states — and neither does a pinned
+           row, which is resident by definition. */
+        if (!isPinned && kind !== 'waiting' && kind !== 'running' && Number(snooze[id] ?? 0) > now) continue;
 
         rows.push({
           id,
@@ -589,10 +646,56 @@ window.__ModuleLoader__.load({
              background subagents or a background job is still busy, even
              though the turn that started that work already ended. */
           ackable: kind === 'done' || kind === 'failed',
+          pinned: isPinned,
+          /* Pin order (most recently pinned first) only orders the resident
+             bucket; active buckets keep their own recency order. */
+          pinRank: isPinned ? (pinRank.get(id) ?? 0) : -1,
         });
       }
 
-      rows.sort((left, right) => (KIND_RANK[left.kind] - KIND_RANK[right.kind]) || (right.updatedAt - left.updatedAt));
+      /* A pinned Session whose summary is in `byId` but not in the ID list
+         (the two snapshots can update in different frames) is still resident.
+         Same visibility rules as any other row: no sub-sessions, no blank
+         Sessions, no archives. */
+      const listed = new Set(rows.map((row) => row.id));
+      for (const pinnedId of pinned) {
+        if (listed.has(pinnedId)) continue;
+        const row = byId[pinnedId];
+        if (row === undefined || row === null) continue;
+        if (row.blank === true) continue;
+        if (row.parentId !== undefined && row.parentId !== null) continue;
+        if (row.origin === 'subagent') continue;
+        if (archived.has(pinnedId)) continue;
+        const view = projections[pinnedId]?.values?.activeSessions;
+        const lastTurnSeq = Number(view?.lastTurnSeq ?? -1);
+        rows.push({
+          id: pinnedId,
+          kind: 'pinned',
+          title: String(row.displayTitle ?? row.id),
+          updatedAt: Number(row.updatedAt ?? 0),
+          workspaceTitle: workspaceOf.get(pinnedId)?.title,
+          subagents: 0,
+          jobs: 0,
+          waitingOnTasks: false,
+          pendingKind: undefined,
+          draft: null,
+          lastError: null,
+          turnSeq: view !== undefined && Number.isFinite(lastTurnSeq) ? lastTurnSeq : -1,
+          ackable: false,
+          pinned: true,
+          pinRank: pinRank.get(pinnedId) ?? 0,
+        });
+        listed.add(pinnedId);
+      }
+
+      rows.sort((left, right) => {
+        const byKind = KIND_RANK[left.kind] - KIND_RANK[right.kind];
+        if (byKind !== 0) return byKind;
+        /* The resident bucket follows pin order; every other bucket is newest
+           first. */
+        if (left.kind === 'pinned') return (left.pinRank ?? 0) - (right.pinRank ?? 0);
+        return right.updatedAt - left.updatedAt;
+      });
       return rows;
     }
 
@@ -720,6 +823,69 @@ window.__ModuleLoader__.load({
         return key.slice('session:'.length);
       } catch {
         return null;
+      }
+    }
+
+    /** @returns the element with this `data-row-key`, or null. */
+    function rowByKey(key) {
+      try {
+        for (const node of document.querySelectorAll('[data-row-key]')) {
+          if (node.getAttribute('data-row-key') === key) return node;
+        }
+      } catch {
+        /* the sidebar is not mounted */
+      }
+      return null;
+    }
+
+    /**
+     * Bring one Session's row in the workspace list into view after the active
+     * list opens it: expand the owning Workspace group when it is folded, click
+     * through the row watermark ("Show more") until the row is rendered, then
+     * scroll it into view. DSH keeps its own search reveal (the internal
+     * `revealSessionId` state) private, so this drives the same DOM affordances
+     * the list already exposes to the user. No-op when the sidebar is not
+     * mounted (rail or phone drawer), the Session is archived, or the list is
+     * in flat mode — there is no group to expand there.
+     * @param sessionId - Session to reveal.
+     * @param items - Workspace views (`workspaces.items`) naming the owner.
+     */
+    function revealSessionInSidebar(sessionId, items) {
+      try {
+        const shown = rowByKey(`session:${sessionId}`);
+        if (shown !== null) {
+          shown.scrollIntoView({ block: 'nearest' });
+          return;
+        }
+        const key = workspaceGroupKeyOf(items, sessionId);
+        if (rowByKey(`workspace:${key}`) === null) return;
+        let attempts = 0;
+        const step = () => {
+          const found = rowByKey(`session:${sessionId}`);
+          if (found !== null) {
+            found.scrollIntoView({ block: 'nearest' });
+            return;
+          }
+          if (attempts >= 40) return;
+          attempts += 1;
+          const header = rowByKey(`workspace:${key}`);
+          if (header === null) return;
+          if (header.getAttribute('aria-expanded') === 'false') {
+            header.click();
+            window.requestAnimationFrame(step);
+            return;
+          }
+          /* Rows below the group's watermark are not rendered at all until
+             "Show more" raises it; the button would collapse the overflow
+             again once everything is shown, so never click it in that state. */
+          const more = rowByKey(`overflow:${key}`);
+          if (more === null || more.getAttribute('aria-expanded') === 'true') return;
+          more.click();
+          window.requestAnimationFrame(step);
+        };
+        step();
+      } catch (error) {
+        log('revealing the Session in the workspace list failed', error);
       }
     }
 
@@ -984,6 +1150,12 @@ window.__ModuleLoader__.load({
       '.dsh-as-dot[data-kind="drafted"]{background:transparent;',
       'box-shadow:inset 0 0 0 2px var(--dsw-alias-label-secondary,#8b949e)}',
       '.dsh-as-dot[data-kind="done"]{background:var(--dsw-alias-state-success-primary,#2ea043)}',
+      /* A resident pin has no live state of its own: a hollow dot reads as
+         "reachable, nothing to report" and keeps the filled colours meaning
+         "needs you". */
+      '.dsh-as-dot[data-kind="pinned"]{background:transparent;',
+      'box-shadow:inset 0 0 0 1.5px var(--dsw-alias-label-tertiary,rgba(128,128,128,.6))}',
+      '.dsh-as-pin{flex:none;margin:0 -2px;font-size:10px;line-height:1;opacity:.85}',
       '.dsh-as-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;',
       'color:var(--dsw-alias-label-primary,inherit)}',
       '.dsh-as-gear{flex:none;font-size:10px;color:var(--dsw-alias-label-tertiary,rgba(128,128,128,.8))}',
@@ -1530,16 +1702,19 @@ window.__ModuleLoader__.load({
               log('openSession failed', error);
             }
             /* On a phone the sidebar is a drawer over the conversation: leaving
-               it open would keep the session the tap just opened behind it. */
+               it open would keep the session the tap just opened behind it.
+               There is no list to reveal in that state either. */
             if (sidebarOverlays()) {
               try {
                 layoutOf()?.toggleSidebar?.();
               } catch (error) {
                 log('collapsing the sidebar overlay failed', error);
               }
+            } else {
+              revealSessionInSidebar(row.id, workspaces?.items);
             }
             acknowledgeRow(row);
-          }, [acknowledgeRow]);
+          }, [acknowledgeRow, workspaces]);
 
           const snoozeRow = useCallback((row) => {
             patchPrefs({ snooze: { ...prefs.snooze, [row.id]: Date.now() + 3600000 } });
@@ -1581,6 +1756,7 @@ window.__ModuleLoader__.load({
             if (row.kind === 'running') return row.waitingOnTasks === true ? t('waitingTasks') : t('running');
             if (row.kind === 'drafted') return t('drafted');
             if (row.kind === 'failed') return t('failedUnread');
+            if (row.kind === 'pinned') return t('pinned');
             return t('doneUnread');
           };
 
@@ -1602,8 +1778,9 @@ window.__ModuleLoader__.load({
             }
             /* A row that is live only because work it started is still running
                (a subagent or a detached job) has no generation of its own to
-               timestamp: name the state. */
-            const tail = row.kind === 'waiting' || row.waitingOnTasks === true
+               timestamp: name the state. A resident pin has nothing newer to
+               date either. */
+            const tail = row.kind === 'waiting' || row.kind === 'pinned' || row.waitingOnTasks === true
               ? statusWordOf(row)
               : relativeOf(row.updatedAt);
             const workspaceTitle = row.workspaceTitle;
@@ -1611,7 +1788,12 @@ window.__ModuleLoader__.load({
           };
 
           const rowLabel = (row) => {
-            const parts = [row.title, statusWordOf(row)];
+            const parts = [row.title];
+            /* A pinned Session shown in an active bucket is still pinned:
+               say so before the state word. The resident bucket's own state
+               word is already "pinned", so it is not repeated. */
+            if (row.pinned === true && row.kind !== 'pinned') parts.push(t('pinned'));
+            parts.push(statusWordOf(row));
             if (typeof row.workspaceTitle === 'string' && row.workspaceTitle !== '') parts.push(row.workspaceTitle);
             return parts.join(' · ');
           };
@@ -1773,6 +1955,9 @@ window.__ModuleLoader__.load({
             onFocus: () => setFocusedId(row.id),
           },
           h('span', { className: 'dsh-as-dot', 'data-kind': row.kind, 'aria-hidden': 'true' }),
+          row.pinned === true
+            ? h('span', { className: 'dsh-as-pin', role: 'img', 'aria-label': t('pinned'), title: t('pinned') }, '📌')
+            : null,
           h('span', { className: 'dsh-as-name' }, row.title),
           row.subagents > 0
             ? h('span', {
@@ -1790,7 +1975,11 @@ window.__ModuleLoader__.load({
             row.ackable === true
               ? h(IconButton, { glyph: '✓', label: t('ack'), onClick: () => acknowledgeRow(row) })
               : null,
-            h(IconButton, { glyph: '⌛', label: t('snooze'), onClick: () => snoozeRow(row) }))));
+            /* A resident pin stays put: snoozing it would only hide its notice
+               while the row itself remains, which reads as a broken snooze. */
+            row.pinned === true
+              ? null
+              : h(IconButton, { glyph: '⌛', label: t('snooze'), onClick: () => snoozeRow(row) }))));
 
           const listStyle = mode === 'panel'
             ? { flex: '1 1 auto', minHeight: 0 }
