@@ -9,6 +9,7 @@
   "running": "正在生成…",
   "waitingTasks": "等待子任务",
   "pinned": "已置顶",
+  "recent": "最近活跃",
   "failedUnread": "轮次失败 · 未查看",
   "doneUnread": "已完成 · 未查看",
   "drafted": "草稿未发送",

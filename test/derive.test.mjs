@@ -82,14 +82,15 @@ function finished(turnSeq, lastTurn = 'done', lastError = null) {
 
 const RUNNING_TURN = (turnSeq) => ({ lastTurnSeq: turnSeq, lastTurn: 'running', lastError: null, endedAt: null });
 
-test('KIND_RANK puts whoever waits on the user first, resident pins last', () => {
+test('KIND_RANK puts whoever waits on the user first, recency shortcuts and pins last', () => {
   assert.ok(KIND_RANK.waiting < KIND_RANK.running);
   assert.ok(KIND_RANK.running < KIND_RANK.drafted);
   assert.ok(KIND_RANK.drafted < KIND_RANK.failed);
   assert.ok(KIND_RANK.failed < KIND_RANK.done);
-  /* Pins are resident, not urgent: they come after everything that needs a
-     decision or a review. */
-  assert.ok(KIND_RANK.done < KIND_RANK.pinned);
+  /* A recency shortcut is navigation, not work; the resident pins stay the
+     very last bucket. */
+  assert.ok(KIND_RANK.done < KIND_RANK.recent);
+  assert.ok(KIND_RANK.recent < KIND_RANK.pinned);
 });
 
 test('relativeTimeKey buckets by minute, hour and day', () => {
@@ -190,7 +191,10 @@ test('ack by turn: seen sequence hides the row, a newer turn brings it back', ()
   assert.deepEqual(unread.map((row) => row.id), ['s1']);
 
   const read = deriveActiveRows({ ...base, list: listState([{ session: summary('s1'), projection: finished(61) }]), acked: { s1: 61 } });
-  assert.deepEqual(read, []);
+  /* Acknowledging clears the notice, not the Session: it drops out of the
+     unread bucket and reappears as a recency shortcut. */
+  assert.deepEqual(read.map((row) => row.kind), ['recent']);
+  assert.equal(read[0].ackable, false);
 
   /* Next turn -> larger seq -> unread again, with no ack bookkeeping. */
   const nextTurn = deriveActiveRows({ ...base, list: listState([{ session: summary('s1'), projection: finished(88) }]), acked: { s1: 61 } });
@@ -199,7 +203,7 @@ test('ack by turn: seen sequence hides the row, a newer turn brings it back', ()
 
   /* A stale ack never resurrects the notice. */
   const staleAck = deriveActiveRows({ ...base, list: listState([{ session: summary('s1'), projection: finished(88) }]), acked: { s1: 200 } });
-  assert.deepEqual(staleAck.map((row) => row.id), []);
+  assert.deepEqual(staleAck.map((row) => row.kind), ['recent']);
 });
 
 test('acking does not hide a running turn', () => {
@@ -580,7 +584,9 @@ test('falls back to completionUnread when the host projection is absent', () => 
     hidden: { s1: 4000 },
     now: 5000,
   });
-  assert.deepEqual(acknowledged, []);
+  /* Acknowledging locally hides the notice; the Session stays as a recency
+     shortcut, which makes no unread claim. */
+  assert.deepEqual(acknowledged.map((row) => row.kind), ['recent']);
 
   /* A newer update (the compute proxy for "another turn ran") shows up again. */
   const newer = deriveActiveRows({
@@ -600,7 +606,9 @@ test('treats an undefined running flag as "no baseline", not as false', () => {
     workspaces: { items: [] },
     now: 5000,
   });
-  assert.deepEqual(fromStatus, []);
+  /* No status and no run: the Session is not live, but it is still a recently
+     active one. */
+  assert.deepEqual(fromStatus.map((row) => row.kind), ['recent']);
 
   const fromRow = deriveActiveRows({
     list: listState([{ session: summary('s1', { running: true }) }]),
@@ -635,7 +643,7 @@ test('a turn left open by a dead host is not reported as running forever', () =>
 
   const recent = deriveActiveRows({ ...input, now: 1_000_000 + 30_000 });
   assert.deepEqual(recent.map((row) => row.kind), ['running'], 'recent activity still reads as a running turn');
-  assert.deepEqual(deriveActiveRows({ ...input, now: 1_000_000 + 10 * 60_000 }), [], 'an abandoned turn is not an active Session');
+  assert.deepEqual(deriveActiveRows({ ...input, now: 1_000_000 + 10 * 60_000 }).map((row) => row.kind), ['recent'], 'an abandoned turn is not an active Session');
 })
 
 test('a live status keeps a long turn visible past the stale window', () => {
@@ -654,9 +662,11 @@ test('finished rows stay hidden until the ack map has been read', () => {
   const list = listState([{ session: summary('done'), projection: finished(7) }]);
   const input = { list, statuses: {}, workspaces: { items: [] }, now: 5000 };
 
-  assert.deepEqual(deriveActiveRows({ ...input, ackedReady: false }), []);
+  /* The unread notice waits for the ack map; the Session itself may still
+     surface as a recency shortcut, which makes no unread claim. */
+  assert.deepEqual(deriveActiveRows({ ...input, ackedReady: false }).map((row) => row.kind), ['recent']);
   assert.equal(deriveActiveRows({ ...input, ackedReady: true }).length, 1);
-  assert.deepEqual(deriveActiveRows({ ...input, ackedReady: false, acked: { done: 7 } }), []);
+  assert.deepEqual(deriveActiveRows({ ...input, ackedReady: false, acked: { done: 7 } }).map((row) => row.kind), ['recent']);
 })
 
 test('an unreadable ack map still shows waiting and running rows', () => {
@@ -675,7 +685,7 @@ test('an unreadable ack map still shows waiting and running rows', () => {
     ackedReady: false,
     now: 5000,
   });
-  assert.deepEqual(rows.map((row) => [row.id, row.kind]), [['ask', 'waiting'], ['run', 'running']]);
+  assert.deepEqual(rows.map((row) => [row.id, row.kind]), [['ask', 'waiting'], ['run', 'running'], ['done', 'recent']]);
 })
 /* ---- Unsent drafts (composer localStorage) ---- */
 
@@ -924,4 +934,72 @@ test('a pinned Session that is still running shows its live row while open', () 
     now: 5000,
   });
   assert.deepEqual(rows.map((row) => [row.id, row.kind]), [['pin', 'running']]);
+})
+
+/* ---------------- Recently active shortcuts ---------------- */
+
+test('the three most recently active Sessions trail the active buckets, before the pins', () => {
+  const rows = deriveActiveRows({
+    list: listState([
+      { session: summary('run', { updatedAt: 900 }) },
+      { session: summary('old', { updatedAt: 100 }) },
+      { session: summary('mid', { updatedAt: 500 }) },
+      { session: summary('new', { updatedAt: 800 }) },
+      { session: summary('older', { updatedAt: 50 }) },
+    ]),
+    statuses: statusMap([{ session: { id: 'run' }, status: { running: true } }]),
+    workspaces: { items: [], pinnedSessionIds: ['old'] },
+    now: 5000,
+  });
+  assert.deepEqual(rows.map((row) => [row.id, row.kind]), [
+    ['run', 'running'],
+    ['new', 'recent'],
+    ['mid', 'recent'],
+    ['older', 'recent'],
+    ['old', 'pinned'],
+  ]);
+})
+
+test('recency shortcuts skip archived, blank, sub-agent and snoozed Sessions', () => {
+  const rows = deriveActiveRows({
+    list: listState([
+      { session: summary('a', { updatedAt: 900 }) },
+      { session: summary('arch', { updatedAt: 800 }) },
+      { session: summary('blank', { updatedAt: 700, blank: true }) },
+      { session: summary('child', { updatedAt: 600, parentId: 'a' }) },
+      { session: summary('sub', { updatedAt: 500, origin: 'subagent' }) },
+      { session: summary('snoozed', { updatedAt: 400 }) },
+    ]),
+    statuses: {},
+    workspaces: { items: [], archivedSessionIds: ['arch'] },
+    snooze: { snoozed: 6000 },
+    now: 5000,
+  });
+  assert.deepEqual(rows.map((row) => [row.id, row.kind]), [['a', 'recent']]);
+})
+
+test('the recency shortcut is capped at three and never repeats a listed Session', () => {
+  const rows = deriveActiveRows({
+    list: listState(['a', 'b', 'c', 'd', 'e'].map((id, index) => ({
+      session: summary(id, { updatedAt: 100 + index }),
+    }))),
+    statuses: {},
+    workspaces: { items: [] },
+    now: 5000,
+  });
+  assert.deepEqual(rows.map((row) => row.id), ['e', 'd', 'c']);
+})
+
+test('a recency shortcut is navigation, not a notice: no ack and no open-Session echo', () => {
+  const rows = deriveActiveRows({
+    list: listState([
+      { session: summary('open', { updatedAt: 900 }) },
+      { session: summary('a', { updatedAt: 800 }) },
+    ]),
+    statuses: {},
+    workspaces: { items: [] },
+    openSessionId: 'open',
+    now: 5000,
+  });
+  assert.deepEqual(rows.map((row) => [row.id, row.kind, row.ackable]), [['a', 'recent', false]]);
 })

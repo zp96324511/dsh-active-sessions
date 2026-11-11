@@ -1,6 +1,6 @@
 {
   "name": "dsh-active-sessions",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "type": "module",
   "description": "侧栏顶部固定「活跃会话」分组：跨项目聚合等待你回复 / 正在生成 / 轮次失败未确认 / 轮次完成未确认的会话，点击直达，已验收状态按 turn 序号跨设备持久。",
   "license": "MIT",

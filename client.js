@@ -173,6 +173,7 @@ window.__ModuleLoader__.load({
         running: '正在生成…',
         waitingTasks: '等待子任务',
         pinned: '已置顶',
+    recent: '最近活跃',
         failedUnread: '轮次失败 · 未查看',
         doneUnread: '已完成 · 未查看',
         drafted: '草稿未发送',
@@ -215,6 +216,7 @@ window.__ModuleLoader__.load({
         running: 'Generating…',
         waitingTasks: 'Waiting for background work',
         pinned: 'Pinned',
+    recent: 'Recently active',
         failedUnread: 'Turn failed · unread',
         doneUnread: 'Done · unread',
         drafted: 'Draft not sent',
@@ -251,8 +253,12 @@ window.__ModuleLoader__.load({
     /* #region pure */
     /* ---- Pure derivation (framework-free; covered by test/derive.test.mjs) ---- */
 
-    /** Bucket order: who needs the user first; resident pins come last. */
-    const KIND_RANK = Object.freeze({ waiting: 0, running: 1, drafted: 2, failed: 3, done: 4, pinned: 5 });
+    /** Bucket order: who needs the user first; recent shortcuts and resident
+        pins trail the active states. */
+    const KIND_RANK = Object.freeze({ waiting: 0, running: 1, drafted: 2, failed: 3, done: 4, recent: 5, pinned: 6 });
+
+    /** How many recently active Sessions trail the group as shortcuts. */
+    const RECENT_LIMIT = 3;
 
     /** Status value used when a Session has no status entry yet. */
     const EMPTY_STATUS = Object.freeze({ running: undefined, pendingInteraction: undefined, completionUnread: false });
@@ -686,6 +692,48 @@ window.__ModuleLoader__.load({
           pinRank: pinRank.get(pinnedId) ?? 0,
         });
         listed.add(pinnedId);
+      }
+
+      /* The recency shortcut: the few Sessions that were active most recently
+         and are not listed above already. A Session with an active state is
+         already higher up (and is not repeated); an acknowledged finish or an
+         idle conversation from this morning lands here, so the group also
+         remembers where the user was working. The Session on
+         screen is skipped: it is already the main view, and a shortcut back to
+         it would only echo it. Capped so this never grows into a second
+         sidebar; a newer Session pushes the oldest one out. */
+      const recentCandidates = [];
+      for (const id of ids) {
+        if (listed.has(id) || id === openSessionId) continue;
+        const row = byId[id];
+        if (row === undefined || row === null) continue;
+        if (row.blank === true) continue;
+        if (row.parentId !== undefined && row.parentId !== null) continue;
+        if (row.origin === 'subagent') continue;
+        if (archived.has(id)) continue;
+        if (Number(snooze[id] ?? 0) > now) continue;
+        recentCandidates.push(row);
+      }
+      recentCandidates.sort((left, right) => (Number(right.updatedAt ?? 0) - Number(left.updatedAt ?? 0))
+        || String(left.id).localeCompare(String(right.id)));
+      for (const row of recentCandidates.slice(0, RECENT_LIMIT)) {
+        rows.push({
+          id: row.id,
+          kind: 'recent',
+          title: String(row.displayTitle ?? row.id),
+          updatedAt: Number(row.updatedAt ?? 0),
+          workspaceTitle: workspaceOf.get(row.id)?.title,
+          subagents: 0,
+          jobs: 0,
+          waitingOnTasks: false,
+          pendingKind: undefined,
+          draft: null,
+          lastError: null,
+          turnSeq: -1,
+          ackable: false,
+          pinned: false,
+          pinRank: -1,
+        });
       }
 
       rows.sort((left, right) => {
@@ -1150,12 +1198,8 @@ window.__ModuleLoader__.load({
       '.dsh-as-dot[data-kind="drafted"]{background:transparent;',
       'box-shadow:inset 0 0 0 2px var(--dsw-alias-label-secondary,#8b949e)}',
       '.dsh-as-dot[data-kind="done"]{background:var(--dsw-alias-state-success-primary,#2ea043)}',
-      /* A resident pin has no live state of its own: a hollow dot reads as
-         "reachable, nothing to report" and keeps the filled colours meaning
-         "needs you". */
-      '.dsh-as-dot[data-kind="pinned"]{background:transparent;',
-      'box-shadow:inset 0 0 0 1.5px var(--dsw-alias-label-tertiary,rgba(128,128,128,.6))}',
-      '.dsh-as-pin{flex:none;margin:0 -2px;font-size:10px;line-height:1;opacity:.85}',
+      '.dsh-as-pin{flex:none;width:8px;margin:0;text-align:center;font-size:10px;line-height:1;opacity:.85}',
+      '.dsh-as-recent{flex:none;width:8px;margin:0;text-align:center;font-size:9px;line-height:1;opacity:.6}',
       '.dsh-as-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;',
       'color:var(--dsw-alias-label-primary,inherit)}',
       '.dsh-as-gear{flex:none;font-size:10px;color:var(--dsw-alias-label-tertiary,rgba(128,128,128,.8))}',
@@ -1757,6 +1801,7 @@ window.__ModuleLoader__.load({
             if (row.kind === 'drafted') return t('drafted');
             if (row.kind === 'failed') return t('failedUnread');
             if (row.kind === 'pinned') return t('pinned');
+            if (row.kind === 'recent') return t('recent');
             return t('doneUnread');
           };
 
@@ -1954,7 +1999,16 @@ window.__ModuleLoader__.load({
             onKeyDown: (event) => onRowKeyDown(event, index),
             onFocus: () => setFocusedId(row.id),
           },
-          h('span', { className: 'dsh-as-dot', 'data-kind': row.kind, 'aria-hidden': 'true' }),
+          /* The leading cell: a status dot for active states, 📌 for a pinned
+             Session, a small clock for a recency shortcut. Neither resident
+             pins nor recency shortcuts carry a state, so neither gets a dot —
+             📌 alone marks a pin, a clock marks a shortcut, and every filled
+             dot keeps meaning "this row needs you". */
+          row.kind === 'recent'
+            ? h('span', { className: 'dsh-as-recent', role: 'img', 'aria-label': t('recent'), title: t('recent') }, '🕘')
+            : row.kind === 'pinned'
+              ? null
+              : h('span', { className: 'dsh-as-dot', 'data-kind': row.kind, 'aria-hidden': 'true' }),
           row.pinned === true
             ? h('span', { className: 'dsh-as-pin', role: 'img', 'aria-label': t('pinned'), title: t('pinned') }, '📌')
             : null,
@@ -1976,8 +2030,10 @@ window.__ModuleLoader__.load({
               ? h(IconButton, { glyph: '✓', label: t('ack'), onClick: () => acknowledgeRow(row) })
               : null,
             /* A resident pin stays put: snoozing it would only hide its notice
-               while the row itself remains, which reads as a broken snooze. */
-            row.pinned === true
+               while the row itself remains, which reads as a broken snooze. A
+               recency shortcut has no notice to hide either; snoozing it would
+               only push it out of the shortcut list. */
+            row.pinned === true || row.kind === 'recent'
               ? null
               : h(IconButton, { glyph: '⌛', label: t('snooze'), onClick: () => snoozeRow(row) }))));
 
