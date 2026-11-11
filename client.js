@@ -171,7 +171,7 @@ window.__ModuleLoader__.load({
         waitingPlan: '计划待审',
         waitingUnknown: '等待你处理',
         running: '正在生成…',
-        waitingSubagents: '等待子任务',
+        waitingTasks: '等待子任务',
         failedUnread: '轮次失败 · 未查看',
         doneUnread: '已完成 · 未查看',
         drafted: '草稿未发送',
@@ -212,7 +212,7 @@ window.__ModuleLoader__.load({
         waitingPlan: 'Plan awaiting review',
         waitingUnknown: 'Waiting for you',
         running: 'Generating…',
-        waitingSubagents: 'Waiting for subagents',
+        waitingTasks: 'Waiting for background work',
         failedUnread: 'Turn failed · unread',
         doneUnread: 'Done · unread',
         drafted: 'Draft not sent',
@@ -408,9 +408,19 @@ window.__ModuleLoader__.load({
      * unfinished work, so it ranks above the two "come back and review" buckets.
      *
      * "Running" includes a Session whose own turn has ended but which still
-     * has a running subagent underneath it: dispatching a background child ends
-     * the parent turn immediately, so the projection alone would report the
-     * Session as finished while the work it asked for is still going on.
+     * has work underneath it: a running subagent, or a background job the turn
+     * left behind (a dev server started with `run_in_background` and not killed
+     * yet). Dispatching a background child ends the parent turn immediately and
+     * a job outlives the turn that registered it, so the projection alone would
+     * report the Session as finished while the work it started is still going
+     * on.
+     *
+     * Every row also carries `ackable`: whether the row is a finished turn that
+     * may be written as reviewed. Only rows shown as done/failed qualify. A row
+     * still shown as running — including one kept live only by its subagents or
+     * a background job — is not ackable: the Session is still busy, and
+     * acknowledging it would put a ✓ on a row that cannot disappear. Opening it
+     * only navigates.
      *
      * @param input - `{ list, statuses, workspaces, acked, ackedReady, drafts,
      *   openSessionId, hidden, snooze, now }`.
@@ -449,11 +459,29 @@ window.__ModuleLoader__.load({
         parentOf.set(id, parentId);
       }
 
+      /* A job event from a forked Session's inherited prefix names the source
+         Session as its owner: the fork is not the process doing that work. A
+         job without an owner is kept — the log is the owning Session's own. */
+      const jobsOf = (id) => {
+        const view = projections[id]?.values?.activeSessions;
+        const jobs = Array.isArray(view?.jobs) ? view.jobs : [];
+        let count = 0;
+        for (const job of jobs) {
+          if (job === null || typeof job !== 'object') continue;
+          if (job.owner !== undefined && job.owner !== null && job.owner !== id) continue;
+          count += 1;
+        }
+        return count;
+      };
+
       /* A child counts as running under the same rule as a row: the status
-         store wins, and "no status yet" falls back to the list row's flag. */
+         store wins, "no status yet" falls back to the list row's flag, and a
+         background job keeps it live after its turn ended. */
       const isLive = (id) => {
         const status = readStatus(statuses, id);
-        return status.running === true || (status.running === undefined && byId[id]?.running === true);
+        if (status.running === true) return true;
+        if (status.running === undefined && byId[id]?.running === true) return true;
+        return jobsOf(id) > 0;
       };
 
       const subagentsRunning = new Map();
@@ -490,10 +518,11 @@ window.__ModuleLoader__.load({
         /* `running === undefined` means "no baseline yet": fall back to the list
            row's own flag rather than reading it as false. */
         const running = status.running === true || (status.running === undefined && row.running === true);
+        const jobs = view === undefined ? 0 : jobsOf(id);
 
         let kind = null;
         let pendingKind;
-        let waitingOnSubagents = false;
+        let waitingOnTasks = false;
         /* A turn the Host abandoned mid-flight is neither running nor finished;
            it is listed nowhere rather than invented as a result — but a draft
            the user left in that Session is still their own pending work. */
@@ -503,12 +532,13 @@ window.__ModuleLoader__.load({
           pendingKind = status.pendingInteraction.kind;
         } else if (running) {
           kind = 'running';
-        } else if ((descendantsRunning.get(id) ?? 0) > 0) {
-          /* The turn that dispatched a background subagent ended as soon as the
-             child was accepted, but the work it delegated is still running:
-             the Session is busy, not a finished turn to come back to. */
+        } else if (jobs > 0 || (descendantsRunning.get(id) ?? 0) > 0) {
+          /* The turn that dispatched a background subagent — or registered a
+             background job — ended as soon as that work was accepted, but the
+             work itself is still running: the Session is busy, not a finished
+             turn to come back to. */
           kind = 'running';
-          waitingOnSubagents = true;
+          waitingOnTasks = true;
         } else if (view !== undefined && view.lastTurn === 'running') {
           if (now - Number(row.updatedAt ?? 0) < STALE_TURN_MS) kind = 'running';
           else abandonedTurn = true;
@@ -545,17 +575,49 @@ window.__ModuleLoader__.load({
           updatedAt: Number(row.updatedAt ?? 0),
           workspaceTitle: workspaceOf.get(id)?.title,
           subagents: subagentsRunning.get(id) ?? 0,
-          waitingOnSubagents,
+          jobs,
+          waitingOnTasks,
           pendingKind,
           draft: kind === 'drafted' ? draftSnippet : null,
           lastError: typeof view?.lastError === 'string' ? view.lastError : null,
-          /* Sequence to write when this row is acknowledged (open / mark read). */
+          /* Sequence to write when this row is acknowledged (open / mark read).
+             For a live turn it names the turn still in flight: callers must
+             check `ackable` before using it. */
           turnSeq: view !== undefined ? lastTurnSeq : -1,
+          /* Only a row displayed as finished is acknowledgeable. That rule is
+             stricter than "its own turn ended": a Session waiting on its
+             background subagents or a background job is still busy, even
+             though the turn that started that work already ended. */
+          ackable: kind === 'done' || kind === 'failed',
         });
       }
 
       rows.sort((left, right) => (KIND_RANK[left.kind] - KIND_RANK[right.kind]) || (right.updatedAt - left.updatedAt));
       return rows;
+    }
+
+    /**
+     * Pick the finished turn of the Session on screen that should be
+     * acknowledged automatically.
+     *
+     * The user is looking at that conversation, so a completion there must not
+     * raise a "come back and review" row against them. Only a visible tab
+     * counts as looking (the caller checks `document.visibilityState`), and only
+     * an ended turn can be acknowledged; a live row is skipped.
+     *
+     * @param rows - derived rows.
+     * @param openSessionId - the Session in the main view, or null.
+     * @returns the row to acknowledge, or null.
+     */
+    function rowToAcknowledgeInView(rows, openSessionId) {
+      if (typeof openSessionId !== 'string' || openSessionId === '') return null;
+      for (const row of Array.isArray(rows) ? rows : []) {
+        if (row === null || typeof row !== 'object') continue;
+        if (row.id !== openSessionId) continue;
+        if (row.ackable !== true) continue;
+        if (row.kind === 'failed' || row.kind === 'done') return row;
+      }
+      return null;
     }
 
     /**
@@ -1307,7 +1369,12 @@ window.__ModuleLoader__.load({
               if (event.key === null || (typeof event.key === 'string' && event.key.startsWith(DRAFT_KEY_PREFIX))) scan();
             };
             const onVisibility = () => {
-              if (document.visibilityState === 'visible') scan();
+              if (document.visibilityState !== 'visible') return;
+              scan();
+              /* Refresh the group on return: a turn that finished while the tab
+                 was hidden has to be listed (or auto-acknowledged) right away,
+                 not on the next 30-second tick. */
+              setNow(Date.now());
             };
             window.addEventListener('storage', onStorage);
             document.addEventListener('visibilitychange', onVisibility);
@@ -1382,6 +1449,11 @@ window.__ModuleLoader__.load({
             });
           }, []);
 
+          /* The Session currently on screen. The Host's retention counter is
+             authoritative; the workspace row's `aria-selected` is the fallback
+             for the older layout that does not publish `retainedBy`. */
+          const openSessionId = currentSessionIdOf(list) ?? openSessionIdOf();
+
           const rows = useMemo(() => deriveActiveRows({
             list,
             statuses,
@@ -1389,11 +1461,11 @@ window.__ModuleLoader__.load({
             acked,
             ackedReady,
             drafts,
-            openSessionId: currentSessionIdOf(list) ?? openSessionIdOf(),
+            openSessionId,
             hidden: prefs.hidden,
             snooze: prefs.snooze,
             now,
-          }), [list, statuses, workspaces, acked, ackedReady, drafts, prefs.hidden, prefs.snooze, now]);
+          }), [list, statuses, workspaces, acked, ackedReady, drafts, openSessionId, prefs.hidden, prefs.snooze, now]);
 
           /** Acknowledge rows; the Host is the source of truth for the result. */
           const acknowledge = useCallback((entries) => {
@@ -1424,12 +1496,31 @@ window.__ModuleLoader__.load({
 
           /** Acknowledge one row, falling back to a local mark without a Host projection. */
           const acknowledgeRow = useCallback((row) => {
+            /* A live row has no finished turn to acknowledge. Opening a Session
+               that is still generating (or waiting on you) must not write its
+               in-flight sequence, or the completion that follows would be
+               filtered out as already seen instead of surfacing as unread. */
+            if (row.ackable !== true) return;
             if (row.turnSeq >= 0) {
               acknowledge([{ sessionId: row.id, turnSeq: row.turnSeq }]);
               return;
             }
             patchPrefs({ hidden: { ...prefs.hidden, [row.id]: row.updatedAt } });
           }, [acknowledge, patchPrefs, prefs.hidden]);
+
+          /* A Session on screen is being read: when its turn finishes while the
+             user is looking at it, acknowledge that turn here. Opening the row
+             refuses to pre-ack a running turn, so without this the row would
+             pop up as "done · unread" for a completion the user just watched.
+             A hidden tab is not reading, so a background completion stays
+             unread until the tab is visible again. */
+          useEffect(() => {
+            if (openSessionId === null) return;
+            if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+            const finishedRow = rowToAcknowledgeInView(rows, openSessionId);
+            if (finishedRow === null) return;
+            acknowledgeRow(finishedRow);
+          }, [rows, openSessionId, acknowledgeRow]);
 
           const openRow = useCallback((row) => {
             const workspaceUi = workspaceUiOf();
@@ -1487,7 +1578,7 @@ window.__ModuleLoader__.load({
               const key = PENDING_COPY[String(row.pendingKind)];
               return key === undefined ? t('waitingUnknown') : t(key);
             }
-            if (row.kind === 'running') return row.waitingOnSubagents === true ? t('waitingSubagents') : t('running');
+            if (row.kind === 'running') return row.waitingOnTasks === true ? t('waitingTasks') : t('running');
             if (row.kind === 'drafted') return t('drafted');
             if (row.kind === 'failed') return t('failedUnread');
             return t('doneUnread');
@@ -1509,9 +1600,10 @@ window.__ModuleLoader__.load({
             if (row.kind === 'drafted') {
               return `${t('draftPrefix')}${String(row.draft ?? '')}`;
             }
-            /* A row that is live only because a subagent is running under it
-               has no generation of its own to timestamp: name the state. */
-            const tail = row.kind === 'waiting' || row.waitingOnSubagents === true
+            /* A row that is live only because work it started is still running
+               (a subagent or a detached job) has no generation of its own to
+               timestamp: name the state. */
+            const tail = row.kind === 'waiting' || row.waitingOnTasks === true
               ? statusWordOf(row)
               : relativeOf(row.updatedAt);
             const workspaceTitle = row.workspaceTitle;
@@ -1562,7 +1654,7 @@ window.__ModuleLoader__.load({
             }
             if (event.key === 'Enter') {
               event.preventDefault();
-              if (event.shiftKey && rows[index].kind !== 'drafted') acknowledgeRow(rows[index]);
+              if (event.shiftKey && rows[index].ackable === true) acknowledgeRow(rows[index]);
               else openRow(rows[index]);
               return;
             }
@@ -1692,10 +1784,12 @@ window.__ModuleLoader__.load({
           h('span', { className: 'dsh-as-sub' }, subtitleOf(row)),
           h('span', { className: 'dsh-as-actions' },
             h(IconButton, { glyph: '→', label: t('open'), onClick: () => openRow(row) }),
-            /* A draft is unfinished work, not an unread notice: there is no
-               turn to acknowledge, and clearing the text is the way it goes. */
-            row.kind === 'drafted' ? null
-              : h(IconButton, { glyph: '✓', label: t('ack'), onClick: () => acknowledgeRow(row) }),
+            /* Only a finished turn can be marked read; a draft or a live turn
+               has nothing to acknowledge, and acknowledging it would swallow
+               the completion that has not happened yet. */
+            row.ackable === true
+              ? h(IconButton, { glyph: '✓', label: t('ack'), onClick: () => acknowledgeRow(row) })
+              : null,
             h(IconButton, { glyph: '⌛', label: t('snooze'), onClick: () => snoozeRow(row) }))));
 
           const listStyle = mode === 'panel'

@@ -13,16 +13,28 @@ const end = source.indexOf('/* #endregion pure */')
 assert.ok(start >= 0 && end > start, 'index.js must keep its pure region markers')
 
 const region = source.slice(start, end)
-const { turnFailureMessage, reduceActiveSessions, viewOfActiveSessions, planBaseline } =
-  new Function(`${region}\nreturn { turnFailureMessage, reduceActiveSessions, viewOfActiveSessions, planBaseline }`)()
+const { turnFailureMessage, reduceActiveSessions, viewOfActiveSessions, planBaseline, jobsLiveAt } =
+  new Function(`${region}\nreturn { turnFailureMessage, reduceActiveSessions, viewOfActiveSessions, planBaseline, jobsLiveAt }`)()
 
-const IDLE = Object.freeze({ lastTurnSeq: -1, lastTurn: 'idle', lastError: null, endedAt: null })
+const IDLE = Object.freeze({ lastTurnSeq: -1, lastTurn: 'idle', lastError: null, endedAt: null, jobs: Object.freeze([]) })
 const turnStart = (seq) => ({ type: 'turn/start', seq, time: 1000 * seq, data: { turn: seq } })
 const turnEnd = (seq, reason, time = 1000 * seq + 5) => ({ type: 'turn/end', seq, time, data: { turn: seq, reason } })
+const jobRegistered = (id, jobId, owner, startedAt = Date.now()) => ({
+  type: 'job/registered',
+  seq: 100,
+  time: startedAt,
+  data: { jobId, owner, kind: 'pwsh', label: 'python app.py', startedAt },
+})
+const jobSettled = (jobId, at = Date.now()) => ({
+  type: 'job/settled',
+  seq: 101,
+  time: at,
+  data: { jobId, kind: 'pwsh', startedAt: at - 1000, status: 'completed', finishedAt: at },
+})
 
 test('turn/start records the event sequence and reports running', () => {
   const next = reduceActiveSessions(IDLE, turnStart(61))
-  assert.deepEqual(next, { lastTurnSeq: 61, lastTurn: 'running', lastError: null, endedAt: null })
+  assert.deepEqual(next, { lastTurnSeq: 61, lastTurn: 'running', lastError: null, endedAt: null, jobs: [] })
 })
 
 test('turn/end with a completed reason reports done', () => {
@@ -76,7 +88,78 @@ test('one state reference always yields one view reference', () => {
     lastTurn: 'done',
     lastError: null,
     endedAt: 1000 * 61 + 5,
+    jobs: [],
   })
+})
+
+/* ---------------- background jobs ---------------- */
+
+test('job/registered is tracked and job/settled removes it', () => {
+  const running = reduceActiveSessions(IDLE, turnStart(61))
+  const ended = reduceActiveSessions(running, turnEnd(61, { kind: 'completed' }))
+  const startedAt = Date.now()
+  const withJob = reduceActiveSessions(ended, jobRegistered('s1', 'job-1', 's1', startedAt))
+  assert.deepEqual(withJob.jobs, [{ id: 'job-1', owner: 's1', startedAt }])
+  /* The turn facts are untouched: a job only adds "still busy". */
+  assert.equal(withJob.lastTurn, 'done')
+  assert.equal(withJob.lastTurnSeq, 61)
+
+  const settled = reduceActiveSessions(withJob, jobSettled('job-1'))
+  assert.deepEqual(settled.jobs, [])
+  assert.equal(settled.lastTurn, 'done')
+})
+
+test('a duplicate registration and a settlement of an unknown job keep the state reference', () => {
+  const withJob = reduceActiveSessions(IDLE, jobRegistered('s1', 'job-1', 's1'))
+  assert.equal(reduceActiveSessions(withJob, jobRegistered('s1', 'job-1', 's1')), withJob)
+  assert.equal(reduceActiveSessions(withJob, jobSettled('job-2')), withJob)
+  /* Malformed events are ignored rather than throwing. */
+  assert.equal(reduceActiveSessions(withJob, { type: 'job/registered', data: {} }), withJob)
+  assert.equal(reduceActiveSessions(withJob, { type: 'job/settled', data: {} }), withJob)
+  assert.equal(reduceActiveSessions(withJob, null), withJob)
+})
+
+test('a job without an owner is still tracked, a missing start time falls back to the event time', () => {
+  const at = Date.now()
+  const state = reduceActiveSessions(IDLE, {
+    type: 'job/registered',
+    seq: 7,
+    time: at,
+    data: { jobId: 'job-x', kind: 'pty-send' },
+  })
+  assert.deepEqual(state.jobs, [{ id: 'job-x', owner: null, startedAt: at }])
+})
+
+test('turn boundaries keep the running jobs', () => {
+  const state = reduceActiveSessions(IDLE, jobRegistered('s1', 'job-1', 's1'))
+  const running = reduceActiveSessions(state, turnStart(62))
+  assert.equal(running.jobs.length, 1)
+  const done = reduceActiveSessions(running, turnEnd(62, { kind: 'completed' }))
+  assert.equal(done.jobs.length, 1)
+  assert.equal(done.lastTurn, 'done')
+})
+
+test('jobs started before this Host process cannot be live', () => {
+  /* A hard kill leaves the registered event without its settlement; the next
+   * Host must not report that Session as running forever. */
+  const jobs = [
+    { id: 'old', owner: 's1', startedAt: 1000 },
+    { id: 'live', owner: 's1', startedAt: 5000 },
+  ]
+  assert.deepEqual(jobsLiveAt(jobs, 5000).map((job) => job.id), ['live'])
+  assert.equal(jobsLiveAt(jobs, 0).length, 2, 'unknown boot time disables the filter')
+  assert.deepEqual(jobsLiveAt(undefined, 5000), [])
+  assert.deepEqual(jobsLiveAt([null, 'nope', { id: 'no-time' }], 5000), [])
+})
+
+test('the wire view exposes only live jobs', () => {
+  const state = reduceActiveSessions(IDLE, jobRegistered('s1', 'job-live', 's1', Date.now()))
+  const view = viewOfActiveSessions(state)
+  assert.deepEqual(view.jobs.map((job) => job.id), ['job-live'])
+  /* A state carrying a pre-boot job (restored cache from a previous process)
+   * exposes no job at all. */
+  const stale = viewOfActiveSessions({ ...IDLE, jobs: [{ id: 'dead', owner: 's1', startedAt: 1000 }] })
+  assert.deepEqual(stale.jobs, [])
 })
 
 /* ---------------- baseline planning ---------------- */

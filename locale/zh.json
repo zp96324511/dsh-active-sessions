@@ -7,7 +7,7 @@
   "waitingPlan": "计划待审",
   "waitingUnknown": "等待你处理",
   "running": "正在生成…",
-  "waitingSubagents": "等待子任务",
+  "waitingTasks": "等待子任务",
   "failedUnread": "轮次失败 · 未查看",
   "doneUnread": "已完成 · 未查看",
   "drafted": "草稿未发送",

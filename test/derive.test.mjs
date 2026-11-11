@@ -25,14 +25,14 @@ function loadPure() {
   const body = CLIENT_SOURCE.slice(start, end);
   const factory = new Function(`${body}
     return { KIND_RANK, EMPTY_STATUS, readStatus, buildSessionWorkspaceIndex, relativeTimeKey,
-             deriveActiveRows, STORAGE_KEY, readPrefs, draftSnippetOf, collectDrafts,
+             deriveActiveRows, rowToAcknowledgeInView, STORAGE_KEY, readPrefs, draftSnippetOf, collectDrafts,
              sameDrafts, DRAFT_KEY_PREFIX, currentSessionIdOf };`);
   return factory();
 }
 
 const pure = loadPure();
 const {
-  deriveActiveRows, relativeTimeKey, buildSessionWorkspaceIndex, KIND_RANK,
+  deriveActiveRows, rowToAcknowledgeInView, relativeTimeKey, buildSessionWorkspaceIndex, KIND_RANK,
   draftSnippetOf, collectDrafts, sameDrafts, DRAFT_KEY_PREFIX, currentSessionIdOf,
 } = pure;
 
@@ -199,6 +199,201 @@ test('acking does not hide a running turn', () => {
   assert.equal(rows[0].kind, 'running');
 });
 
+test('a live turn is not ackable, so opening a running row leaves its completion unread', () => {
+  /* The click path writes an ack only when `ackable` is true. Clicking a
+     generating Session opens it, writes nothing, and then the turn ends in the
+     background: it must surface as "done", not vanish as pre-acknowledged. */
+  const running = deriveActiveRows({
+    list: listState([{ session: summary('s1'), projection: RUNNING_TURN(42) }]),
+    statuses: statusMap([{ session: { id: 's1' }, status: { running: true } }]),
+    workspaces: { items: [] },
+    now: 5000,
+  });
+  assert.equal(running[0].kind, 'running');
+  assert.equal(running[0].turnSeq, 42);
+  assert.equal(running[0].ackable, false);
+
+  const done = deriveActiveRows({
+    list: listState([{ session: summary('s1'), projection: finished(42) }]),
+    statuses: statusMap([{ session: { id: 's1' }, status: { running: false, completionUnread: true } }]),
+    workspaces: { items: [] },
+    acked: {},
+    ackedReady: true,
+    now: 5000,
+  });
+  assert.deepEqual(done.map((row) => row.kind), ['done']);
+  assert.equal(done[0].ackable, true);
+});
+
+test('a waiting row is not ackable: its turn has not ended yet', () => {
+  const rows = deriveActiveRows({
+    list: listState([{ session: summary('s1'), projection: RUNNING_TURN(7) }]),
+    statuses: statusMap([
+      { session: { id: 's1' }, status: { running: true, pendingInteraction: { kind: 'approval' } } },
+    ]),
+    workspaces: { items: [] },
+    now: 5000,
+  });
+  assert.equal(rows[0].kind, 'waiting');
+  assert.equal(rows[0].ackable, false);
+});
+
+test('a row kept live by subagents is not ackable: the Session is still busy', () => {
+  const rows = deriveActiveRows({
+    list: listState([
+      { session: summary('parent', { updatedAt: 4000 }), projection: finished(3) },
+      { session: summary('child', { parentId: 'parent' }) },
+    ]),
+    statuses: statusMap([
+      { session: { id: 'parent' }, status: { running: false, completionUnread: true } },
+      { session: { id: 'child' }, status: { running: true } },
+    ]),
+    workspaces: { items: [] },
+    now: 5000,
+  });
+  assert.equal(rows[0].kind, 'running');
+  assert.equal(rows[0].waitingOnTasks, true);
+  /* Its own turn ended when the child was dispatched, but the Session still has
+     delegated work outstanding. A ✓ here would hide nothing and a premature ack
+     would swallow the completion if the follow-up turn never starts. */
+  assert.equal(rows[0].ackable, false);
+});
+
+test('a background job keeps a finished turn running until it settles', () => {
+  const job = { id: 'job-1', owner: 's1', startedAt: 1 };
+  const list = listState([{ session: summary('s1', { updatedAt: 4000 }), projection: { ...finished(3), jobs: [job] } }]);
+  const input = { list, statuses: {}, workspaces: { items: [] }, acked: {}, now: 5000 };
+  const running = deriveActiveRows(input);
+  assert.deepEqual(running.map((row) => row.kind), ['running']);
+  assert.equal(running[0].waitingOnTasks, true);
+  assert.equal(running[0].jobs, 1);
+  assert.equal(running[0].ackable, false);
+  /* The whole point: a ✓ or an open must not write the finished turn's
+     sequence while the job it started is still alive. */
+  assert.equal(rowToAcknowledgeInView(running, 's1'), null);
+
+  /* A turn acknowledged before the job surfaces is still a live row. */
+  const acked = deriveActiveRows({ ...input, acked: { s1: 3 } });
+  assert.deepEqual(acked.map((row) => row.kind), ['running']);
+
+  /* Killing the job turns the row back into the done notice. */
+  const settled = deriveActiveRows({
+    list: listState([{ session: summary('s1', { updatedAt: 4000 }), projection: finished(3) }]),
+    statuses: {},
+    workspaces: { items: [] },
+    acked: {},
+    now: 5000,
+  });
+  assert.deepEqual(settled.map((row) => row.kind), ['done']);
+  assert.equal(settled[0].ackable, true);
+});
+
+test('a job keeps a row live past the snooze window', () => {
+  const list = listState([
+    { session: summary('s1', { updatedAt: 1000 }), projection: { ...finished(3), jobs: [{ id: 'job-1', owner: 's1', startedAt: 1 }] } },
+  ]);
+  const rows = deriveActiveRows({
+    list,
+    statuses: {},
+    workspaces: { items: [] },
+    snooze: { s1: 60_000 },
+    now: 5000,
+  });
+  assert.deepEqual(rows.map((row) => row.kind), ['running']);
+});
+
+test('a job in an inherited prefix belongs to the source Session, not the fork', () => {
+  const list = listState([
+    { session: summary('source', { updatedAt: 3000 }), projection: { ...finished(3), jobs: [{ id: 'job-s', owner: 'source', startedAt: 1 }] } },
+    { session: summary('fork', { updatedAt: 4000 }), projection: { ...finished(3), jobs: [{ id: 'job-s', owner: 'source', startedAt: 1 }] } },
+  ]);
+  const rows = deriveActiveRows({ list, statuses: {}, workspaces: { items: [] }, acked: {}, now: 5000 });
+  assert.deepEqual(rows.map((row) => [row.id, row.kind, row.jobs]), [
+    ['source', 'running', 1],
+    ['fork', 'done', 0],
+  ]);
+});
+
+test('a child kept live by its background job keeps the parent running', () => {
+  const list = listState([
+    { session: summary('parent', { updatedAt: 4000 }), projection: finished(3) },
+    { session: summary('child', { parentId: 'parent' }), projection: { ...finished(7), jobs: [{ id: 'job-c', owner: 'child', startedAt: 1 }] } },
+  ]);
+  const rows = deriveActiveRows({
+    list,
+    statuses: statusMap([
+      { session: { id: 'parent' }, status: { running: false, completionUnread: true } },
+      { session: { id: 'child' }, status: { running: false } },
+    ]),
+    workspaces: { items: [] },
+    now: 5000,
+  });
+  assert.deepEqual(rows.map((row) => row.id), ['parent']);
+  assert.equal(rows[0].kind, 'running');
+  assert.equal(rows[0].waitingOnTasks, true);
+  assert.equal(rows[0].subagents, 1);
+  assert.equal(rows[0].jobs, 0);
+});
+
+test('a job without an owner is trusted for its own row', () => {
+  const list = listState([
+    { session: summary('s1', { updatedAt: 4000 }), projection: { ...finished(3), jobs: [{ id: 'job-1', owner: null, startedAt: 1 }] } },
+  ]);
+  const rows = deriveActiveRows({ list, statuses: {}, workspaces: { items: [] }, now: 5000 });
+  assert.equal(rows[0].kind, 'running');
+  assert.equal(rows[0].jobs, 1);
+});
+
+test('finished rows and the no-projection fallback are ackable', () => {
+  const list = listState([
+    { session: summary('done'), projection: finished(3) },
+    { session: summary('failed'), projection: finished(4, 'failed', 'boom') },
+  ]);
+  const finishedRows = deriveActiveRows({ list, statuses: {}, workspaces: { items: [] }, now: 5000 });
+  assert.deepEqual(finishedRows.map((row) => [row.kind, row.ackable]), [['failed', true], ['done', true]]);
+
+  /* Without a projection the row exists only because the Host's own status
+     says "completion unread": it is finished by construction and the client
+     acknowledges it locally. */
+  const fallback = deriveActiveRows({
+    list: listState([{ session: summary('legacy', { updatedAt: 4000 }) }]),
+    statuses: statusMap([{ session: { id: 'legacy' }, status: { completionUnread: true } }]),
+    workspaces: { items: [] },
+    now: 5000,
+  });
+  assert.equal(fallback[0].kind, 'done');
+  assert.equal(fallback[0].turnSeq, -1);
+  assert.equal(fallback[0].ackable, true);
+});
+
+test('the finished turn of the Session on screen is picked for automatic acknowledgement', () => {
+  const rows = [
+    { id: 'open', kind: 'done', turnSeq: 9, ackable: true },
+    { id: 'other', kind: 'done', turnSeq: 8, ackable: true },
+    { id: 'live', kind: 'running', turnSeq: 10, ackable: false },
+    { id: 'draft', kind: 'drafted', turnSeq: -1, ackable: false },
+  ];
+  assert.equal(rowToAcknowledgeInView(rows, 'open')?.turnSeq, 9);
+  assert.equal(rowToAcknowledgeInView(rows, 'other')?.turnSeq, 8);
+  /* A running turn is never auto-acknowledged: it has not ended yet. */
+  assert.equal(rowToAcknowledgeInView(rows, 'live'), null);
+  assert.equal(rowToAcknowledgeInView(rows, 'draft'), null);
+  assert.equal(rowToAcknowledgeInView(rows, null), null);
+  assert.equal(rowToAcknowledgeInView(undefined, 'open'), null);
+});
+
+test('a draft left on an abandoned turn is not ackable either', () => {
+  const rows = deriveActiveRows({
+    list: listState([{ session: summary('s1', { updatedAt: 1000 }), projection: RUNNING_TURN(4) }]),
+    statuses: {},
+    workspaces: { items: [] },
+    drafts: { s1: 'still typing' },
+    now: 10 * 60 * 1000,
+  });
+  assert.equal(rows[0].kind, 'drafted');
+  assert.equal(rows[0].ackable, false);
+});
+
 test('snooze hides finished rows only', () => {
   const now = 10_000;
   const list = listState([
@@ -254,7 +449,7 @@ test('a parent waiting on a running subagent is live, not finished', () => {
   ]);
   const rows = deriveActiveRows({ list, statuses: running, workspaces: { items: [] }, now: 5000 });
   assert.deepEqual(rows.map((row) => row.kind), ['running']);
-  assert.equal(rows[0].waitingOnSubagents, true);
+  assert.equal(rows[0].waitingOnTasks, true);
   assert.equal(rows[0].subagents, 1);
 
   /* An already reviewed turn does not hide a Session that is still working. */
@@ -274,7 +469,7 @@ test('a parent waiting on a running subagent is live, not finished', () => {
     now: 5000,
   });
   assert.deepEqual(settled.map((row) => row.kind), ['done']);
-  assert.equal(settled[0].waitingOnSubagents, false);
+  assert.equal(settled[0].waitingOnTasks, false);
 });
 
 test('a nested subagent keeps every ancestor live', () => {
@@ -294,7 +489,7 @@ test('a nested subagent keeps every ancestor live', () => {
   });
   assert.deepEqual(rows.map((row) => row.id), ['root']);
   assert.equal(rows[0].kind, 'running');
-  assert.equal(rows[0].waitingOnSubagents, true);
+  assert.equal(rows[0].waitingOnTasks, true);
 });
 
 test('a live subagent outranks the stale-turn bound and the snooze window', () => {
@@ -349,7 +544,7 @@ test('a running subagent outranks the previous turn failure', () => {
     now: 5000,
   });
   assert.deepEqual(rows.map((row) => row.kind), ['running']);
-  assert.equal(rows[0].waitingOnSubagents, true);
+  assert.equal(rows[0].waitingOnTasks, true);
 });
 
 test('falls back to completionUnread when the host projection is absent', () => {

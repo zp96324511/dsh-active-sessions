@@ -9,7 +9,8 @@
  *
  * 1. `activeSessions` Session projection — per Session, the sequence number of
  *    the last turn (`turn/start.seq`), whether that turn is running, ended
- *    cleanly or failed, and the failure message. Values reach the Client for
+ *    cleanly or failed, the failure message, and the background jobs the
+ *    Session registered and has not settled. Values reach the Client for
  *    every listed Session, retained or not.
  * 2. `active_sessions` storage domain + `remote.activeSessions` — the
  *    acknowledgement records: `sessionId -> { turnSeq, at }`, written when the
@@ -20,6 +21,16 @@
  * conversation was last viewed. `turnSeq` sidesteps it — an ack means "I have
  * seen the turn that started at seq N", and a later turn gets a larger seq and
  * is unread again by construction. No clocks, no expiry, no cross-tab drift.
+ *
+ * A background job (`job/registered` … `job/settled`) is the other way a
+ * Session stays busy after its turn ended: `pwsh` and terminal calls can run
+ * detached for as long as the process they started (a dev server, a watcher).
+ * The projection tracks the running set so the Client can keep that Session
+ * listed as running until the job settles. Jobs started before this Host
+ * process began cannot be alive — they died with the previous process — and
+ * are filtered out of the wire view even when the durable log still has their
+ * `registered` event without a `settled` one (a hard crash leaves exactly
+ * that shape).
  *
  * The acknowledgement records are user behaviour and live in their own storage
  * domain; the projection stays a pure function of the Session log and is
@@ -94,8 +105,12 @@ const REMOTE_METHOD_DESCRIPTOR = '@deepseek-ai/dsh-typert-protocol/remote-method
 /** Projection key; the Client half reads it as `values.activeSessions`. */
 const PROJECTION_KEY = 'activeSessions'
 
-/** Bumped whenever the wire view changes shape. */
-const STATE_VERSION = 1
+/**
+ * Bumped whenever the persisted state or the wire view changes shape: the
+ * cache discards rows whose `ver` no longer matches, so a bump costs one
+ * background re-fold of the stored logs (0.4.9 added `jobs`).
+ */
+const STATE_VERSION = 2
 
 /**
  * Reserved key in the `acks` table recording that the one-time baseline has
@@ -114,6 +129,7 @@ const EMPTY_STATE = Object.freeze({
   lastTurn: 'idle',
   lastError: null,
   endedAt: null,
+  jobs: Object.freeze([]),
 })
 
 /** Wire/state schema, shared by `stateSchema` and `viewSchema` (zod instances are accepted as-is). */
@@ -122,6 +138,14 @@ const ACTIVE_SESSIONS_SCHEMA = zod.object({
   lastTurn: zod.enum(['idle', 'running', 'done', 'failed']),
   lastError: zod.string().nullable(),
   endedAt: zod.number().nullable(),
+  /* Running background jobs: `job/registered` minus `job/settled`. `owner` is
+   * the Session that started the job; a forked Session inherits the events of
+   * its source, so the Client only trusts entries owned by the row itself. */
+  jobs: zod.array(zod.object({
+    id: zod.string(),
+    owner: zod.string().nullable(),
+    startedAt: zod.number(),
+  })),
 })
 
 /**
@@ -185,11 +209,12 @@ function turnFailureMessage(reason) {
  */
 function reduceActiveSessions(state, event) {
   if (event === null || typeof event !== 'object') return state
+  const jobs = Array.isArray(state?.jobs) ? state.jobs : []
   if (event.type === 'turn/start') {
     const seq = Number(event.seq)
     if (!Number.isFinite(seq)) return state
     /* A new turn starts unread by construction: its seq is larger than any ack. */
-    return { lastTurnSeq: seq, lastTurn: 'running', lastError: null, endedAt: null }
+    return { lastTurnSeq: seq, lastTurn: 'running', lastError: null, endedAt: null, jobs }
   }
   if (event.type === 'turn/end') {
     const failure = turnFailureMessage(event.data?.reason)
@@ -199,9 +224,69 @@ function reduceActiveSessions(state, event) {
       lastTurn: failure === null ? 'done' : 'failed',
       lastError: failure,
       endedAt: Number.isFinite(endedAt) ? endedAt : state.endedAt,
+      jobs,
     }
   }
+  /* A background job is the only work that outlives its turn. The event is
+   * appended by the jobs registry on registration and on settlement (see
+   * dsh-jobs-local's `recordSessionEvent`), so the projection can tell a
+   * Session whose turn ended from one that is still doing something. */
+  if (event.type === 'job/registered') {
+    const id = typeof event.data?.jobId === 'string' ? event.data.jobId : null
+    if (id === null) return state
+    /* A duplicate registration must not double-count (a resumed fold can
+     * replay the event). */
+    if (jobs.some((job) => job.id === id)) return state
+    const startedAt = Number(event.data?.startedAt)
+    const registeredAt = Number(event.time)
+    const owner = typeof event.data?.owner === 'string' && event.data.owner !== '' ? event.data.owner : null
+    return {
+      ...state,
+      jobs: [
+        ...jobs,
+        {
+          id,
+          owner,
+          startedAt: Number.isFinite(startedAt)
+            ? startedAt
+            : (Number.isFinite(registeredAt) ? registeredAt : 0),
+        },
+      ],
+    }
+  }
+  if (event.type === 'job/settled') {
+    const id = typeof event.data?.jobId === 'string' ? event.data.jobId : null
+    if (id === null || !jobs.some((job) => job.id === id)) return state
+    return { ...state, jobs: jobs.filter((job) => job.id !== id) }
+  }
   return state
+}
+
+/**
+ * Epoch ms at which this Host process started.
+ *
+ * A job cannot outlive the process that spawned it, so any `job/registered`
+ * event older than this is a leftover of a previous process (typically a hard
+ * kill that never appended `job/settled`). The wire view drops those: without
+ * the filter the Session would claim to be running forever.
+ *
+ * `process.uptime()` is unavailable outside Node (the pure region is also
+ * evaluated by the unit tests); 0 means "unknown" and disables the filter.
+ */
+const HOST_STARTED_AT = (() => {
+  const uptime = Number(typeof process === 'object' && process !== null ? process.uptime?.() : NaN)
+  return Number.isFinite(uptime) && uptime >= 0 ? Date.now() - Math.round(uptime * 1000) : 0
+})()
+
+/**
+ * @param jobs - the projection's registered jobs.
+ * @param hostStartedAt - drop jobs started before this epoch ms; 0 keeps all.
+ * @returns live jobs only.
+ */
+function jobsLiveAt(jobs, hostStartedAt) {
+  const list = Array.isArray(jobs) ? jobs : []
+  if (!Number.isFinite(hostStartedAt) || hostStartedAt <= 0) return list
+  return list.filter((job) => job !== null && typeof job === 'object' && Number(job.startedAt) >= hostStartedAt)
 }
 
 /**
@@ -220,6 +305,7 @@ function viewOfActiveSessions(state) {
     lastTurn: state.lastTurn,
     lastError: state.lastError,
     endedAt: state.endedAt,
+    jobs: jobsLiveAt(state.jobs, HOST_STARTED_AT),
   }
   viewCache.set(state, view)
   return view

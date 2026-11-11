@@ -7,7 +7,7 @@
   "waitingPlan": "Plan awaiting review",
   "waitingUnknown": "Waiting for you",
   "running": "Generating…",
-  "waitingSubagents": "Waiting for subagents",
+  "waitingTasks": "Waiting for background work",
   "failedUnread": "Turn failed · unread",
   "doneUnread": "Done · unread",
   "drafted": "Draft not sent",

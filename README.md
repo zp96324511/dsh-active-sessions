@@ -11,20 +11,24 @@ Each session appears once, with its highest-priority state.
 | Priority | State | Rule | Visual | Copy |
 |---|---|---|---|---|
 | 1 | Waiting on you | `status.pendingInteraction != null` | still orange dot | Waiting for approval / question / plan review (unknown kinds fall back to a generic label) |
-| 2 | Generating | `status.running === true`, or a subagent underneath this session is still running | pulsing accent dot | Generating… / Waiting for subagents |
+| 2 | Generating | `status.running === true`, or a subagent / background job underneath this session is still running | pulsing accent dot | Generating… / Waiting for background work |
 | 3 | Draft not sent | this browser holds unsent composer text for the session | hollow dot | `Draft: <first 48 chars>` |
 | 4 | Failed, unreviewed | turn ended with an error, not acknowledged | red dot | Turn failed, not reviewed (error summary on hover) |
 | 5 | Done, unreviewed | turn completed, not acknowledged | green dot | Completed, not reviewed |
 
 Inside a state, rows sort by `updatedAt` descending. Blank sessions, sub-sessions (`parentId` / `origin === 'subagent'`) and archived sessions are excluded. A parent row shows `⚙ N` when it has N running direct children.
 
-A parent whose background subagent is still running counts as **generating**, not as a finished turn: accepting a child ends the parent's turn (`turn/end` → `completed`) while the host keeps waiting for its descendants, and `api-session/status` only reflects whether the agent itself is running — it is already idle. The turn projection alone would therefore report "done" for work that is still going on. The row's copy is `Waiting for subagents` rather than `Generating…`, `⚙ N` still counts direct children, a running grandchild keeps every ancestor live too, and a finished turn that was already acknowledged stays listed while a child runs — running is a live state, not a notice.
+A parent whose background subagent is still running counts as **generating**, not as a finished turn: accepting a child ends the parent's turn (`turn/end` → `completed`) while the host keeps waiting for its descendants, and `api-session/status` only reflects whether the agent itself is running — it is already idle. The turn projection alone would therefore report "done" for work that is still going on. The row's copy is `Waiting for background work` rather than `Generating…`, `⚙ N` still counts direct children, a running grandchild keeps every ancestor live too, and a finished turn that was already acknowledged stays listed while a child runs — running is a live state, not a notice.
+
+Background jobs count as the same kind of work: `run_in_background` `pwsh`/`bash` calls and detached terminal sends append `job/registered` to the session log and `job/settled` when they end. A session with an unsettled job (a Flask server left running, say) stays **generating** after its turn ends, with the same `Waiting for background work` copy, no `✓`, and no snooze; once the job settles the row returns to the ordinary done/failed-unreviewed state. A child kept alive by its own job keeps the parent live too, so `⚙ N` still counts it. Orphaned `job/registered` events from a hard kill are filtered by this host process's start time (a job cannot outlive the process that spawned it), and `job` events inherited by a forked session are filtered by `owner`, so only the session that actually holds the job stays live.
 
 The block stays pinned even when nothing is active: the header remains and the list shows one muted `No active sessions` placeholder line instead of disappearing.
 
 ## Why "reviewed" is a turn number
 
-The host projection records `lastTurnSeq` for every session (the `seq` of that turn's `turn/start` event). Opening a row or marking it reviewed stores `acked[sessionId] = lastTurnSeq`, and "unreviewed" simply means `lastTurnSeq > acked`.
+The host projection records `lastTurnSeq` for every session (the `seq` of that turn's `turn/start` event). Opening a row for a **finished** turn, or marking it reviewed, stores `acked[sessionId] = lastTurnSeq`, and "unreviewed" simply means `lastTurnSeq > acked`.
+
+Opening a row whose turn is still generating, still waiting on you, still waiting on its background subagents, or still running a background job only navigates and writes no ack. The subagent/job case is deliberate even though the session's own turn ended when that work started: the session is still busy, so it is not a finished turn to review, and acknowledging it would hide nothing (the running row stays listed) while risking the real completion if the follow-up turn never starts. Without the rule altogether, a row you peeked at while it was generating would be filtered out as already seen the moment it completed in the background, instead of surfacing as "done · unread". The converse is handled too: a turn that finishes while its session is on screen in a visible tab is acknowledged automatically, so watching a completion does not raise a "done · unread" notice against you; a completion in a background tab stays unread.
 
 A timestamp comparison cannot work: the fact that a session stopped while the user was looking elsewhere never reaches the host, so a second tab or a second device would inherit a wrong verdict, and clock skew breaks the comparison outright. A turn number is precise ("I saw turn 61"), self-versioning (an old ack stops matching as soon as a new turn starts), and it comes from the host log, so it is stable across refreshes, tabs and devices.
 
@@ -60,12 +64,12 @@ The host already persists every composer draft in localStorage under `dsh.conver
 
 | Action | Effect |
 |---|---|
-| Click a row | Open the session and mark it reviewed (a draft row only opens) |
-| Hover ✓ on a row | Mark reviewed without opening (draft rows have no ✓) |
+| Click a row | Open the session and mark it reviewed (a row with no finished turn — draft, generating, waiting on you, or waiting on subagents/background jobs — only opens) |
+| Hover ✓ on a row | Mark reviewed without opening (a row with no finished turn has no ✓) |
 | Hover ⌛ on a row | Snooze for one hour (failed / done / draft rows) |
 | Header ✓ / ⌛ | Acknowledge or snooze all current failed + done rows (draft rows are never bulk-acknowledged) |
 | Click the header | Collapse / expand (remembered locally) |
-| Keyboard | On the header or a row: `↑/↓` move, `Enter` open, `Shift+Enter` mark reviewed (draft rows open instead), `Esc` blur |
+| Keyboard | On the header or a row: `↑/↓` move, `Enter` open, `Shift+Enter` mark reviewed (a row with no finished turn opens instead), `Esc` blur |
 
 The header badge counts only sessions waiting on you. The block is capped at `min(320px, 40vh)` and scrolls internally beyond eight rows.
 
