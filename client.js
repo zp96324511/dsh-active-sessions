@@ -1198,8 +1198,10 @@ window.__ModuleLoader__.load({
       '.dsh-as-dot[data-kind="drafted"]{background:transparent;',
       'box-shadow:inset 0 0 0 2px var(--dsw-alias-label-secondary,#8b949e)}',
       '.dsh-as-dot[data-kind="done"]{background:var(--dsw-alias-state-success-primary,#2ea043)}',
-      '.dsh-as-pin{flex:none;width:8px;margin:0;text-align:center;font-size:10px;line-height:1;opacity:.85}',
-      '.dsh-as-recent{flex:none;width:8px;margin:0;text-align:center;font-size:9px;line-height:1;opacity:.6}',
+      '.dsh-as-pin{flex:none;width:8px;height:8px;display:flex;align-items:center;justify-content:center;',
+      'font-size:12px;line-height:1;opacity:.9}',
+      '.dsh-as-recent{flex:none;width:8px;height:8px;display:flex;align-items:center;justify-content:center;',
+      'font-size:12px;line-height:1;opacity:.75}',
       '.dsh-as-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;',
       'color:var(--dsw-alias-label-primary,inherit)}',
       '.dsh-as-gear{flex:none;font-size:10px;color:var(--dsw-alias-label-tertiary,rgba(128,128,128,.8))}',
@@ -1999,19 +2001,16 @@ window.__ModuleLoader__.load({
             onKeyDown: (event) => onRowKeyDown(event, index),
             onFocus: () => setFocusedId(row.id),
           },
-          /* The leading cell: a status dot for active states, 📌 for a pinned
-             Session, a small clock for a recency shortcut. Neither resident
-             pins nor recency shortcuts carry a state, so neither gets a dot —
-             📌 alone marks a pin, a clock marks a shortcut, and every filled
-             dot keeps meaning "this row needs you". */
+          /* The leading cell is one glyph wide, never two: the state's dot
+             when the row has a state, 📌 when the row is a resident pin, a
+             small clock for a recency shortcut. A pinned Session that is
+             running or waiting keeps its state dot — the pin marker replaces
+             the dot only when the pin is the row's whole state. */
           row.kind === 'recent'
             ? h('span', { className: 'dsh-as-recent', role: 'img', 'aria-label': t('recent'), title: t('recent') }, '🕘')
             : row.kind === 'pinned'
-              ? null
+              ? h('span', { className: 'dsh-as-pin', role: 'img', 'aria-label': t('pinned'), title: t('pinned') }, '📌')
               : h('span', { className: 'dsh-as-dot', 'data-kind': row.kind, 'aria-hidden': 'true' }),
-          row.pinned === true
-            ? h('span', { className: 'dsh-as-pin', role: 'img', 'aria-label': t('pinned'), title: t('pinned') }, '📌')
-            : null,
           h('span', { className: 'dsh-as-name' }, row.title),
           row.subagents > 0
             ? h('span', {

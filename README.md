@@ -16,7 +16,7 @@ Each session appears once, with its highest-priority state.
 | 4 | Failed, unreviewed | turn ended with an error, not acknowledged | red dot | Turn failed, not reviewed (error summary on hover) |
 | 5 | Done, unreviewed | turn completed, not acknowledged | green dot | Completed, not reviewed |
 | 6 | Recently active | updated most recently, not listed above, not the Session on screen | small clock 🕘 | Recently active |
-| 7 | Pinned (resident) | listed in the host's `pinnedSessionIds` and no higher-priority state applies | 📌 | Pinned |
+| 7 | Pinned (resident) | listed in the host's `pinnedSessionIds` and no higher-priority state applies | 📌 (a live state replaces it with that state's dot) | Pinned |
 
 Inside a state, rows sort by `updatedAt` descending; the recency shortcut lists the three newest such Sessions after the active states, and the resident bucket follows pin order (most recently pinned first) at the very end — a resident entry never pushes work that needs you down. Blank sessions, sub-sessions (`parentId` / `origin === 'subagent'`) and archived sessions are excluded. A parent row shows `⚙ N` when it has N running direct children.
 
@@ -24,7 +24,7 @@ A parent whose background subagent is still running counts as **generating**, no
 
 Background jobs count as the same kind of work: `run_in_background` `pwsh`/`bash` calls and detached terminal sends append `job/registered` to the session log and `job/settled` when they end. A session with an unsettled job (a Flask server left running, say) stays **generating** after its turn ends, with the same `Waiting for background work` copy, no `✓`, and no snooze; once the job settles the row returns to the ordinary done/failed-unreviewed state. A child kept alive by its own job keeps the parent live too, so `⚙ N` still counts it. Orphaned `job/registered` events from a hard kill are filtered by this host process's start time (a job cannot outlive the process that spawned it), and `job` events inherited by a forked session are filtered by `owner`, so only the session that actually holds the job stays live.
 
-Pinned sessions are resident: DSH's pin set is registry-wide (not per workspace), and the plugin lists every pinned session after all the active buckets as a permanent entry point. A pinned session that already has an active state (waiting, generating, draft, failed, done-unread) still appears once, in that state, with 📌 before its title; once the turn is marked reviewed or would be snoozed, the row falls back to the `Pinned` bucket instead of disappearing. A resident row has no `✓` and no `⌛` (snoozing would only hide the notice while the row stays put, which reads as a broken snooze), and clicking it only opens. A pinned session that is currently on screen keeps its resident row too — it is the way back after switching to another session.
+Pinned sessions are resident: DSH's pin set is registry-wide (not per workspace), and the plugin lists every pinned session after all the active buckets as a permanent entry point. A pinned session that already has an active state (waiting, generating, draft, failed, done-unread) still appears once, in that state, and its leading cell is that state's dot — the 📌 is replaced, never doubled up; once the turn is marked reviewed or would be snoozed, the row falls back to the `Pinned` bucket instead of disappearing. A resident row has no `✓` and no `⌛` (snoozing would only hide the notice while the row stays put, which reads as a broken snooze), and clicking it only opens. A pinned session that is currently on screen keeps its resident row too — it is the way back after switching to another session.
 
 Recently active: before the pinned rows, the group lists at most three Sessions that were updated most recently and are not already listed above, marked with a small clock 🕘 and subtitled with their workspace and relative time. They are navigation shortcuts only: no ack, no `✓`, no `⌛`, and never a duplicate of a row above; a fourth recent Session pushes the oldest one out. So acknowledging a finished turn does not make the row vanish — it moves down into the recency shortcut, where it can still be found later. The Session currently on screen is not repeated there (its conversation already is the main view).
 
@@ -266,7 +266,7 @@ The price is that it reads the whole log store once (5402 sessions / 77 MB here,
 9. Collapse the sidebar: the block hides without leaving a gap.
 10. With nothing active: the block stays pinned and shows the muted `No active sessions` placeholder.
 11. Open the same host in a browser that never loaded this plugin: only the genuinely unreviewed few appear, not the whole history (the baseline migration ran — the host log shows `... B baselined in ...`).
-12. Pin a session in any workspace: it appears at the end of the group (📌, "Pinned"); marking it reviewed leaves it listed, unpinning removes it; while it generates it appears once with 📌 before the title.
+12. Pin a session in any workspace: it appears at the end of the group (📌, "Pinned"); marking it reviewed leaves it listed, unpinning removes it; while it generates it appears once with its status dot instead of 📌.
 
 ## Troubleshooting
 
