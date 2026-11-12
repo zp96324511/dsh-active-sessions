@@ -1201,7 +1201,7 @@ window.__ModuleLoader__.load({
       '.dsh-as-pin{flex:none;width:8px;height:8px;display:flex;align-items:center;justify-content:center;',
       'font-size:12px;line-height:1;opacity:.9}',
       '.dsh-as-recent{flex:none;width:8px;height:8px;display:flex;align-items:center;justify-content:center;',
-      'font-size:12px;line-height:1;opacity:.75}',
+      'font-size:10px;line-height:1;opacity:.75}',
       '.dsh-as-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;',
       'color:var(--dsw-alias-label-primary,inherit)}',
       '.dsh-as-gear{flex:none;font-size:10px;color:var(--dsw-alias-label-tertiary,rgba(128,128,128,.8))}',
