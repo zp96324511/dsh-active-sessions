@@ -1188,10 +1188,15 @@ window.__ModuleLoader__.load({
       '.dsh-as-dot[data-kind="running"]{background:var(--dsw-alias-state-business-primary,#247bbf);',
       'animation:dshAsPulse 1.4s ease-in-out infinite}',
       /* Started work still running (subagent / detached job) while the main
-         turn is over: same blue as an actively generating Session, but a
-         slower pulse — the hue says "busy", the rhythm says "not this agent
-         itself". Static amber stays reserved for "waiting for you". */
-      '.dsh-as-dot[data-kind="running"][data-tasks="true"]{animation-duration:4.5s}',
+         turn is over: same hue and the same 1.4s pulse, drawn as two
+         concentric rings instead of a solid dot. Colour and rhythm stay one
+         family; the shape carries the meaning ("this row is busy, but not
+         with its own generation"). Static amber stays reserved for
+         "waiting for you". */
+      '.dsh-as-dot[data-kind="running"][data-tasks="true"]{background:transparent;',
+      'box-shadow:inset 0 0 0 1px var(--dsw-alias-state-business-primary,#247bbf);position:relative}',
+      '.dsh-as-dot[data-kind="running"][data-tasks="true"]::after{content:"";position:absolute;inset:2px;',
+      'border:1px solid var(--dsw-alias-state-business-primary,#247bbf);border-radius:50%}',
       '.dsh-as-dot[data-kind="failed"]{background:var(--dsw-alias-state-error-primary,#d33)}',
       '.dsh-as-dot[data-kind="drafted"]{background:transparent;',
       'box-shadow:inset 0 0 0 2px var(--dsw-alias-label-secondary,#8b949e)}',
@@ -2013,8 +2018,8 @@ window.__ModuleLoader__.load({
                 'data-kind': row.kind,
                 /* A running row can mean two different things: the main agent
                    is generating, or its turn already ended and only subagents
-                   or detached jobs are still working. The dot colour separates
-                   them without adding another glyph. */
+                   or detached jobs are still working. The dot's shape tells
+                   them apart without adding another glyph (solid vs rings). */
                 'data-tasks': row.waitingOnTasks === true ? 'true' : undefined,
                 'aria-hidden': 'true',
               }),
