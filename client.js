@@ -1194,6 +1194,10 @@ window.__ModuleLoader__.load({
       '.dsh-as-dot[data-kind="waiting"]{background:var(--dsw-alias-state-warning-primary,#d29922)}',
       '.dsh-as-dot[data-kind="running"]{background:var(--dsw-alias-state-business-primary,#247bbf);',
       'animation:dshAsPulse 1.4s ease-in-out infinite}',
+      /* Started work still running (subagent / detached job) while the main
+         turn is over: same pulse, different hue, so "it is generating" and
+         "it is waiting on something it started" are one glance apart. */
+      '.dsh-as-dot[data-kind="running"][data-tasks="true"]{background:#8b5cf6}',
       '.dsh-as-dot[data-kind="failed"]{background:var(--dsw-alias-state-error-primary,#d33)}',
       '.dsh-as-dot[data-kind="drafted"]{background:transparent;',
       'box-shadow:inset 0 0 0 2px var(--dsw-alias-label-secondary,#8b949e)}',
@@ -2010,7 +2014,16 @@ window.__ModuleLoader__.load({
             ? h('span', { className: 'dsh-as-recent', role: 'img', 'aria-label': t('recent'), title: t('recent') }, '🕘')
             : row.kind === 'pinned'
               ? h('span', { className: 'dsh-as-pin', role: 'img', 'aria-label': t('pinned'), title: t('pinned') }, '📌')
-              : h('span', { className: 'dsh-as-dot', 'data-kind': row.kind, 'aria-hidden': 'true' }),
+              : h('span', {
+                className: 'dsh-as-dot',
+                'data-kind': row.kind,
+                /* A running row can mean two different things: the main agent
+                   is generating, or its turn already ended and only subagents
+                   or detached jobs are still working. The dot colour separates
+                   them without adding another glyph. */
+                'data-tasks': row.waitingOnTasks === true ? 'true' : undefined,
+                'aria-hidden': 'true',
+              }),
           h('span', { className: 'dsh-as-name' }, row.title),
           row.subagents > 0
             ? h('span', {
