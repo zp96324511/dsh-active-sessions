@@ -820,7 +820,7 @@ test('the Session retained by the main view is the one on screen', () => {
  * Resident pins: the Sessions pinned in any Workspace stay listed here.
  * -------------------------------------------------------------------------- */
 
-test('a pinned Session with no active state stays listed, in pin order', () => {
+test('a pinned Session with no active state stays listed, newest like every bucket', () => {
   const rows = deriveActiveRows({
     list: listState([
       { session: summary('done-one', { updatedAt: 3000 }), projection: finished(5) },
@@ -833,7 +833,9 @@ test('a pinned Session with no active state stays listed, in pin order', () => {
         { workspaceId: 'w1', title: 'alpha', sessionIds: ['done-one'] },
         { workspaceId: 'w2', title: 'beta', sessionIds: ['idle-pin', 'other-pin'] },
       ],
-      pinnedSessionIds: ['other-pin', 'idle-pin'],
+      /* Pin order is deliberately the opposite of recency: the resident bucket
+         follows updatedAt, not the order in which things were pinned. */
+      pinnedSessionIds: ['idle-pin', 'other-pin'],
     },
     acked: {},
     ackedReady: true,

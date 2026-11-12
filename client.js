@@ -459,7 +459,7 @@ window.__ModuleLoader__.load({
      *
      * @param input - `{ list, statuses, workspaces, acked, ackedReady, drafts,
      *   openSessionId, hidden, snooze, now }`.
-     * @returns rows sorted by bucket, then newest first (`pinned` by pin order).
+     * @returns rows sorted by bucket, then newest first in every bucket.
      */
     function deriveActiveRows(input) {
       const list = input?.list;
@@ -487,13 +487,12 @@ window.__ModuleLoader__.load({
          Workspace groups with them. This group has a different job — it is a
          work queue — so the resident bucket comes last instead: every pinned
          Session stays reachable without pushing a row that needs the user
-         down. Order inside the bucket is pin order (most recent first). */
+         down. Order inside the bucket is recency, newest first, like every
+         other bucket. */
       const pinnedSessionIds = Array.isArray(workspaces?.pinnedSessionIds) ? workspaces.pinnedSessionIds : [];
       const pinned = new Set();
-      const pinRank = new Map();
       for (const pinnedId of pinnedSessionIds) {
-        if (typeof pinnedId !== 'string' || pinned.has(pinnedId)) continue;
-        pinRank.set(pinnedId, pinRank.size);
+        if (typeof pinnedId !== 'string') continue;
         pinned.add(pinnedId);
       }
 
@@ -653,9 +652,6 @@ window.__ModuleLoader__.load({
              though the turn that started that work already ended. */
           ackable: kind === 'done' || kind === 'failed',
           pinned: isPinned,
-          /* Pin order (most recently pinned first) only orders the resident
-             bucket; active buckets keep their own recency order. */
-          pinRank: isPinned ? (pinRank.get(id) ?? 0) : -1,
         });
       }
 
@@ -689,7 +685,6 @@ window.__ModuleLoader__.load({
           turnSeq: view !== undefined && Number.isFinite(lastTurnSeq) ? lastTurnSeq : -1,
           ackable: false,
           pinned: true,
-          pinRank: pinRank.get(pinnedId) ?? 0,
         });
         listed.add(pinnedId);
       }
@@ -732,16 +727,14 @@ window.__ModuleLoader__.load({
           turnSeq: -1,
           ackable: false,
           pinned: false,
-          pinRank: -1,
         });
       }
 
       rows.sort((left, right) => {
         const byKind = KIND_RANK[left.kind] - KIND_RANK[right.kind];
         if (byKind !== 0) return byKind;
-        /* The resident bucket follows pin order; every other bucket is newest
-           first. */
-        if (left.kind === 'pinned') return (left.pinRank ?? 0) - (right.pinRank ?? 0);
+        /* Every bucket is newest first, the resident bucket included: a pin
+           that was active a minute ago sits above one untouched for a week. */
         return right.updatedAt - left.updatedAt;
       });
       return rows;
@@ -1198,7 +1191,7 @@ window.__ModuleLoader__.load({
          turn is over: same blue as an actively generating Session, but a
          slower pulse — the hue says "busy", the rhythm says "not this agent
          itself". Static amber stays reserved for "waiting for you". */
-      '.dsh-as-dot[data-kind="running"][data-tasks="true"]{animation-duration:2.8s}',
+      '.dsh-as-dot[data-kind="running"][data-tasks="true"]{animation-duration:4.5s}',
       '.dsh-as-dot[data-kind="failed"]{background:var(--dsw-alias-state-error-primary,#d33)}',
       '.dsh-as-dot[data-kind="drafted"]{background:transparent;',
       'box-shadow:inset 0 0 0 2px var(--dsw-alias-label-secondary,#8b949e)}',
