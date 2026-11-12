@@ -1195,10 +1195,10 @@ window.__ModuleLoader__.load({
       '.dsh-as-dot[data-kind="running"]{background:var(--dsw-alias-state-business-primary,#247bbf);',
       'animation:dshAsPulse 1.4s ease-in-out infinite}',
       /* Started work still running (subagent / detached job) while the main
-         turn is over: same pulse, amber rather than blue — blue reads as
-         "this Session is generating", amber as "it is waiting on work it
-         started". Static amber stays reserved for "waiting for you". */
-      '.dsh-as-dot[data-kind="running"][data-tasks="true"]{background:var(--dsw-alias-state-warn-primary,#d29922)}',
+         turn is over: same blue as an actively generating Session, but a
+         slower pulse — the hue says "busy", the rhythm says "not this agent
+         itself". Static amber stays reserved for "waiting for you". */
+      '.dsh-as-dot[data-kind="running"][data-tasks="true"]{animation-duration:2.8s}',
       '.dsh-as-dot[data-kind="failed"]{background:var(--dsw-alias-state-error-primary,#d33)}',
       '.dsh-as-dot[data-kind="drafted"]{background:transparent;',
       'box-shadow:inset 0 0 0 2px var(--dsw-alias-label-secondary,#8b949e)}',
