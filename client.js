@@ -1189,13 +1189,13 @@ window.__ModuleLoader__.load({
       'animation:dshAsPulse 1.4s ease-in-out infinite}',
       /* Started work still running (subagent / detached job) while the main
          turn is over: same hue and the same 1.4s pulse, drawn as a ring
-         around a solid centre dot instead of a solid dot. Two thin rings
-         read as one blob at 8px; the ring-plus-dot silhouette stays legible.
-         Static amber remains "waiting for you". */
-      '.dsh-as-dot[data-kind="running"][data-tasks="true"]{background:transparent;',
-      'box-shadow:inset 0 0 0 1px var(--dsw-alias-state-business-primary,#247bbf);position:relative}',
-      '.dsh-as-dot[data-kind="running"][data-tasks="true"]::after{content:"";position:absolute;inset:2.5px;',
-      'background:var(--dsw-alias-state-business-primary,#247bbf);border-radius:50%}',
+         around a solid centre dot instead of a solid dot. The centre is
+         painted with a radial gradient rather than an absolutely positioned
+         pseudo-element: fractional insets land on half device pixels at
+         common display scalings and the dot drifts off centre. */
+      '.dsh-as-dot[data-kind="running"][data-tasks="true"]{background:radial-gradient(circle at center,',
+      'var(--dsw-alias-state-business-primary,#247bbf) 0 1.5px,transparent 1.6px);',
+      'box-shadow:inset 0 0 0 1px var(--dsw-alias-state-business-primary,#247bbf)}',
       '.dsh-as-dot[data-kind="failed"]{background:var(--dsw-alias-state-error-primary,#d33)}',
       '.dsh-as-dot[data-kind="drafted"]{background:transparent;',
       'box-shadow:inset 0 0 0 2px var(--dsw-alias-label-secondary,#8b949e)}',
