@@ -1188,14 +1188,12 @@ window.__ModuleLoader__.load({
       '.dsh-as-dot[data-kind="running"]{background:var(--dsw-alias-state-business-primary,#247bbf);',
       'animation:dshAsPulse 1.4s ease-in-out infinite}',
       /* Started work still running (subagent / detached job) while the main
-         turn is over: same hue and the same 1.4s pulse, drawn as a ring
-         around a solid centre dot instead of a solid dot. The centre is
-         painted with a radial gradient rather than an absolutely positioned
-         pseudo-element: fractional insets land on half device pixels at
-         common display scalings and the dot drifts off centre. */
-      '.dsh-as-dot[data-kind="running"][data-tasks="true"]{background:radial-gradient(circle at center,',
-      'var(--dsw-alias-state-business-primary,#247bbf) 0 1.5px,transparent 1.6px);',
-      'box-shadow:inset 0 0 0 1px var(--dsw-alias-state-business-primary,#247bbf)}',
+         turn is over: same hue and the same 1.4s pulse, drawn as a hollow
+         ring instead of a solid dot — the same "queued, not sending"
+         silhouette the composer uses. The static grey ring is a draft;
+         this one is the accent colour and pulses. */
+      '.dsh-as-dot[data-kind="running"][data-tasks="true"]{background:transparent;',
+      'box-shadow:inset 0 0 0 1.5px var(--dsw-alias-state-business-primary,#247bbf)}',
       '.dsh-as-dot[data-kind="failed"]{background:var(--dsw-alias-state-error-primary,#d33)}',
       '.dsh-as-dot[data-kind="drafted"]{background:transparent;',
       'box-shadow:inset 0 0 0 2px var(--dsw-alias-label-secondary,#8b949e)}',
@@ -2018,7 +2016,7 @@ window.__ModuleLoader__.load({
                 /* A running row can mean two different things: the main agent
                    is generating, or its turn already ended and only subagents
                    or detached jobs are still working. The dot's shape tells
-                   them apart without adding another glyph (solid vs rings). */
+                   them apart without adding another glyph (solid vs hollow ring). */
                 'data-tasks': row.waitingOnTasks === true ? 'true' : undefined,
                 'aria-hidden': 'true',
               }),
