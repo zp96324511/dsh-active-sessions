@@ -27,7 +27,7 @@ function loadPure() {
     return { KIND_RANK, EMPTY_STATUS, readStatus, buildSessionWorkspaceIndex, workspaceGroupKeyOf,
              relativeTimeKey, deriveActiveRows, rowToAcknowledgeInView, STORAGE_KEY, readPrefs,
              draftSnippetOf, collectDrafts, sameDrafts, DRAFT_KEY_PREFIX, currentSessionIdOf,
-             mainPanelActiveOf };`);
+             mainPanelActiveOf, updateNoteOf };`);
   return factory();
 }
 
@@ -37,6 +37,7 @@ const {
   workspaceGroupKeyOf, KIND_RANK,
   draftSnippetOf, collectDrafts, sameDrafts, DRAFT_KEY_PREFIX, currentSessionIdOf,
   mainPanelActiveOf,
+  updateNoteOf,
 } = pure;
 
 /** One SessionSummary-shaped row. */
@@ -828,6 +829,18 @@ test('a global main panel is what takes the Conversation off screen', () => {
   assert.equal(mainPanelActiveOf({}), false);
   assert.equal(mainPanelActiveOf(null), false);
   assert.equal(mainPanelActiveOf(undefined), false);
+})
+
+test('the update note never repeats the status line', () => {
+  /* A manual check writes its answer into the status line, which already reads
+     "up to date" — echoing it below the button printed the same sentence twice
+     (user-reported). The note line is only for facts the status line omits. */
+  assert.equal(updateNoteOf('已是最新版本', '已是最新版本'), null);
+  assert.equal(updateNoteOf('', '已是最新版本'), null);
+  assert.equal(updateNoteOf(undefined, '已是最新版本'), null);
+  assert.equal(updateNoteOf('正在安装…', '已是最新版本'), '正在安装…');
+  assert.equal(updateNoteOf('安装完成', '已安装，重启宿主后生效'), '安装完成');
+  assert.equal(updateNoteOf('检查更新失败 TypeError: fetch failed', '已是最新版本'), '检查更新失败 TypeError: fetch failed');
 })
 
 test('a turn that finishes behind a global panel waits to be reviewed', () => {

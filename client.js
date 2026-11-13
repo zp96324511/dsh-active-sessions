@@ -806,6 +806,25 @@ window.__ModuleLoader__.load({
       return activePanelId !== null && activePanelId !== undefined;
     }
 
+    /**
+     * The update popover's note line, or null when it would say nothing new.
+     *
+     * A check answers "what is the state now", and that answer is already the
+     * status line above the button; writing it below the button as well printed
+     * the same sentence twice. The note line therefore only carries what the
+     * status line is not saying: install progress, an install failure, or a
+     * transport error that leaves the last known state standing.
+     *
+     * @param message - the last action's own message ('' when it has none).
+     * @param statusText - the sentence already on screen in the status line.
+     * @returns the note to render, or null for "render nothing".
+     */
+    function updateNoteOf(message, statusText) {
+      const note = typeof message === 'string' ? message : '';
+      if (note === '') return null;
+      return note === statusText ? null : note;
+    }
+
     /** Local UI preferences: only what the Host has no opinion about. */
     const STORAGE_KEY = 'dsh-active-sessions:v1';
 
@@ -1531,9 +1550,12 @@ window.__ModuleLoader__.load({
           /* Update channel state. `null` means "not read yet": the chip only
              advertises a version once a check has actually answered. */
           const [updateInfo, setUpdateInfo] = useState(null);
-          const [updateBusy, setUpdateBusy] = useState(false);
+          /* Which update action is in flight: a check owns the status line
+             ("checking…"), an install reports on the note line below it. */
+          const [updatePhase, setUpdatePhase] = useState('idle');
           const [updateOpen, setUpdateOpen] = useState(false);
           const [updateMsg, setUpdateMsg] = useState('');
+          const updateBusy = updatePhase !== 'idle';
 
           /* Relative times refresh on their own; nothing else needs a timer. */
           useEffect(() => {
@@ -1643,23 +1665,27 @@ window.__ModuleLoader__.load({
             };
           }, []);
 
+          /* A check answers "what is the state now", so its answer belongs in
+             the status line and nowhere else: writing the same sentence to the
+             note line as well printed it twice under the button. The note line
+             is reserved for what the status line cannot say — install progress,
+             an install failure, or a transport error that leaves the last
+             known state standing (the panel never invents a new state for a
+             request that never reached the host). */
           const checkForUpdate = useCallback(async () => {
-            setUpdateBusy(true);
+            setUpdatePhase('check');
             setUpdateMsg('');
             try {
-              const info = normalizeUpdateInfo(await updateRequest('/update?force=1'));
-              setUpdateInfo(info);
-              if (info.ok !== true) setUpdateMsg(info.error ?? t('updateFailed'));
-              else if (info.hasUpdate !== true) setUpdateMsg(t('upToDate'));
+              setUpdateInfo(normalizeUpdateInfo(await updateRequest('/update?force=1')));
             } catch (error) {
               setUpdateMsg(`${t('updateFailed')} ${String(error?.message ?? error)}`);
             } finally {
-              setUpdateBusy(false);
+              setUpdatePhase('idle');
             }
           }, [t]);
 
           const runUpgrade = useCallback(async () => {
-            setUpdateBusy(true);
+            setUpdatePhase('upgrade');
             setUpdateMsg(t('updating'));
             try {
               const result = await updateRequest('/update/upgrade', {
@@ -1677,7 +1703,7 @@ window.__ModuleLoader__.load({
             } catch (error) {
               setUpdateMsg(String(error?.message ?? error));
             } finally {
-              setUpdateBusy(false);
+              setUpdatePhase('idle');
             }
           }, [t, updateInfo]);
 
@@ -1948,7 +1974,7 @@ window.__ModuleLoader__.load({
             ? ''
             : `v${String(loadedVersion)}`;
 
-          const updateStatusText = updateInfo === null
+          const updateStatusText = updatePhase === 'check' || updateInfo === null
             ? t('checking')
             : updateInfo.ok !== true
               ? (updateInfo.error ?? t('updateUnavailable'))
@@ -1957,6 +1983,10 @@ window.__ModuleLoader__.load({
                 : needsRestart
                   ? t('restartRequired')
                   : t('upToDate');
+
+          /* One sentence per fact: a check that answers "already latest" is
+             already on screen above the button, so it earns no second line. */
+          const updateNote = updateNoteOf(updateMsg, updateStatusText);
 
           const toggleUpdate = (event) => {
             event.stopPropagation();
@@ -1985,7 +2015,7 @@ window.__ModuleLoader__.load({
             role: 'group',
             'aria-label': t('update'),
           },
-          h('div', { className: 'dsh-as-upd-line' }, updateStatusText),
+          h('div', { className: 'dsh-as-upd-line', 'aria-live': 'polite' }, updateStatusText),
           h('div', { className: 'dsh-as-upd-actions' },
             h('button', {
               type: 'button',
@@ -2001,7 +2031,7 @@ window.__ModuleLoader__.load({
               onClick: runUpgrade,
             }, `${t('upgrade')} v${String(updateInfo.latest)}`) : null),
           needsRestart ? h('div', { className: 'dsh-as-upd-hint' }, t('restartHint')) : null,
-          updateMsg === '' ? null : h('div', { className: 'dsh-as-upd-msg' }, updateMsg));
+          updateNote === null ? null : h('div', { className: 'dsh-as-upd-msg' }, updateNote));
 
           const header = h('div', {
             className: 'dsh-as-head',
