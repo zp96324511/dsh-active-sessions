@@ -25,7 +25,7 @@ window.__ModuleLoader__.load({
     const React = require('react');
     const { createPortal } = require('react-dom');
     const h = React.createElement;
-    const { useCallback, useEffect, useMemo, useRef, useState } = React;
+    const { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } = React;
     const zod = require('zod');
 
     const PREFIX = '[dsh-active-sessions]';
@@ -474,7 +474,9 @@ window.__ModuleLoader__.load({
       const snooze = input?.snooze ?? {};
       const now = Number(input?.now) || 0;
       /* The Session on screen is already in front of the user: listing its own
-         draft would just echo what the composer shows. */
+         draft would just echo what the composer shows. The caller passes null
+         while a global panel covers the Conversation — then nothing is on
+         screen, and the Session has to be listed like any other. */
       const openSessionId = typeof input?.openSessionId === 'string' ? input.openSessionId : null;
       /* Until the Host answers with its ack map, "unread" is unknowable. Showing
          the optimistic default would list every finished Session in the store. */
@@ -782,6 +784,26 @@ window.__ModuleLoader__.load({
         if (summary !== null && typeof summary === 'object' && (summary.retainedBy?.mainView ?? 0) > 0) return id;
       }
       return null;
+    }
+
+    /**
+     * Whether a global main panel is covering the Conversation.
+     *
+     * Plugins, Scheduled tasks and every other keyed `main` entry replace the
+     * Conversation inside the same frame. DSH keeps the Session retained by the
+     * main view while that happens (`retainedBy.mainView` is not released), so
+     * the retention counter alone still calls it "on screen" when nobody can
+     * see it. `activePanelId` is the layout's own answer: null displays the
+     * current Conversation, a panel id means a panel took its place.
+     *
+     * @param info - layout `panelInfo` snapshot (`{ activePanelId }`), possibly
+     *   undefined while the layout service is not mounted yet.
+     * @returns true when a global panel occupies the main view.
+     */
+    function mainPanelActiveOf(info) {
+      if (info === null || typeof info !== 'object') return false;
+      const activePanelId = info.activePanelId;
+      return activePanelId !== null && activePanelId !== undefined;
     }
 
     /** Local UI preferences: only what the Host has no opinion about. */
@@ -1667,10 +1689,30 @@ window.__ModuleLoader__.load({
             });
           }, []);
 
+          /* The Conversation is not necessarily what the main view shows:
+             Plugins / Scheduled tasks and every other keyed `main` entry
+             replace it in the same frame while the Host keeps the Session
+             retained for `mainView`. Subscribe to the layout's panel
+             selection so "on screen" keeps meaning "actually on screen";
+             without it a turn that finishes behind a panel is acknowledged
+             unseen and the row vanishes instead of waiting to be reviewed. */
+          const panelInfo = layoutOf()?.panelInfo;
+          const subscribePanel = useCallback((listener) => (
+            typeof panelInfo?.subscribe === 'function' ? panelInfo.subscribe(listener) : () => {}
+          ), [panelInfo]);
+          const readPanelActive = useCallback(() => mainPanelActiveOf(
+            typeof panelInfo?.getSnapshot === 'function' ? panelInfo.getSnapshot() : null,
+          ), [panelInfo]);
+          const panelActive = useSyncExternalStore(subscribePanel, readPanelActive);
+
           /* The Session currently on screen. The Host's retention counter is
-             authoritative; the workspace row's `aria-selected` is the fallback
-             for the older layout that does not publish `retainedBy`. */
-          const openSessionId = currentSessionIdOf(list) ?? openSessionIdOf();
+             authoritative for the retained Session; the workspace row's
+             `aria-selected` is the fallback for the older layout that does not
+             publish `retainedBy`; a global panel covering the Conversation
+             means nothing is on screen at all. */
+          const openSessionId = panelActive
+            ? null
+            : (currentSessionIdOf(list) ?? openSessionIdOf());
 
           const rows = useMemo(() => deriveActiveRows({
             list,
@@ -1730,8 +1772,9 @@ window.__ModuleLoader__.load({
              user is looking at it, acknowledge that turn here. Opening the row
              refuses to pre-ack a running turn, so without this the row would
              pop up as "done · unread" for a completion the user just watched.
-             A hidden tab is not reading, so a background completion stays
-             unread until the tab is visible again. */
+             A hidden tab is not reading, and neither is a Conversation covered
+             by a global panel (`openSessionId` is null there), so those
+             completions stay unread until the Conversation is visible again. */
           useEffect(() => {
             if (openSessionId === null) return;
             if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;

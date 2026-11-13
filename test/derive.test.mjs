@@ -26,7 +26,8 @@ function loadPure() {
   const factory = new Function(`${body}
     return { KIND_RANK, EMPTY_STATUS, readStatus, buildSessionWorkspaceIndex, workspaceGroupKeyOf,
              relativeTimeKey, deriveActiveRows, rowToAcknowledgeInView, STORAGE_KEY, readPrefs,
-             draftSnippetOf, collectDrafts, sameDrafts, DRAFT_KEY_PREFIX, currentSessionIdOf };`);
+             draftSnippetOf, collectDrafts, sameDrafts, DRAFT_KEY_PREFIX, currentSessionIdOf,
+             mainPanelActiveOf };`);
   return factory();
 }
 
@@ -35,6 +36,7 @@ const {
   deriveActiveRows, rowToAcknowledgeInView, relativeTimeKey, buildSessionWorkspaceIndex,
   workspaceGroupKeyOf, KIND_RANK,
   draftSnippetOf, collectDrafts, sameDrafts, DRAFT_KEY_PREFIX, currentSessionIdOf,
+  mainPanelActiveOf,
 } = pure;
 
 /** One SessionSummary-shaped row. */
@@ -814,6 +816,39 @@ test('the Session retained by the main view is the one on screen', () => {
   assert.equal(currentSessionIdOf({ ids: ['gone'], byId: { s1: { id: 's1', retainedBy: { mainView: 1 } } } }), null);
   /* A malformed summary must not throw while the list is still loading. */
   assert.equal(currentSessionIdOf({ ids: ['s1', 's2'], byId: { s1: null, s2: { id: 's2', retainedBy: { mainView: 1 } } } }), 's2');
+})
+
+test('a global main panel is what takes the Conversation off screen', () => {
+  /* DSH swaps the keyed `main` entry (Plugins, Scheduled tasks, …) into the
+     same frame and keeps the Session retained by `mainView`; `activePanelId`
+     is the layout's own line between "the Conversation is displayed" and "a
+     panel is displayed instead". */
+  assert.equal(mainPanelActiveOf({ activePanelId: null }), false);
+  assert.equal(mainPanelActiveOf({ activePanelId: 'plugins' }), true);
+  assert.equal(mainPanelActiveOf({}), false);
+  assert.equal(mainPanelActiveOf(null), false);
+  assert.equal(mainPanelActiveOf(undefined), false);
+})
+
+test('a turn that finishes behind a global panel waits to be reviewed', () => {
+  const list = listState([{ session: summary('s1', { retainedBy: { mainView: 1 } }), projection: finished(9) }]);
+  const input = { list, statuses: {}, workspaces: { items: [] }, acked: {}, ackedReady: true, now: 5000 };
+
+  /* The client's own composition: retained by the main view, but a global
+     panel owns the frame, so nothing is on screen. */
+  const coveredId = mainPanelActiveOf({ activePanelId: 'plugins' }) ? null : currentSessionIdOf(list);
+  assert.equal(coveredId, null);
+  const coveredRows = deriveActiveRows({ ...input, openSessionId: coveredId });
+  assert.deepEqual(coveredRows.map((row) => [row.id, row.kind, row.ackable]), [['s1', 'done', true]]);
+  /* No "on screen" ack may consume the completion nobody saw. */
+  assert.equal(rowToAcknowledgeInView(coveredRows, coveredId), null);
+
+  /* The panel closes and the Conversation comes back: the same completion is
+     now in front of the user, so the automatic ack applies again. */
+  const openId = mainPanelActiveOf({ activePanelId: null }) ? null : currentSessionIdOf(list);
+  assert.equal(openId, 's1');
+  const shownRows = deriveActiveRows({ ...input, openSessionId: openId });
+  assert.equal(rowToAcknowledgeInView(shownRows, openId)?.turnSeq, 9);
 })
 
 /* -------------------------------------------------------------------------- *
