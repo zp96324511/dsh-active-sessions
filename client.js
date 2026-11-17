@@ -501,10 +501,17 @@ window.__ModuleLoader__.load({
       /* Subagents belong to their parent Session: the child never becomes a row
          of its own, it shows up as ⚙ N on the parent and keeps the parent live
          while it runs. The child rows live in `byId` (the Host lists them), so
-         the parent chain is walked over the whole catalog, not just `ids`. */
+         the parent chain is walked over the whole catalog, not just `ids`.
+         `origin` decides, never `parentId` alone: a fork keeps the id of the
+         Session it branched from in `parentId` (older Hosts wrote it, newer
+         ones omit it), but a fork is an independent top-level Session — the
+         Host classifies delegated work by `origin`, and says outright that the
+         presence of `parentId` does not make a Session a subagent. */
       const parentOf = new Map();
       for (const id of Object.keys(byId)) {
-        const parentId = byId[id]?.parentId;
+        const row = byId[id];
+        if (row === undefined || row === null || row.origin !== 'subagent') continue;
+        const parentId = row.parentId;
         if (parentId === undefined || parentId === null) continue;
         parentOf.set(id, parentId);
       }
@@ -557,7 +564,6 @@ window.__ModuleLoader__.load({
         const row = byId[id];
         if (row === undefined || row === null) continue;
         if (row.blank === true) continue;
-        if (row.parentId !== undefined && row.parentId !== null) continue;
         if (row.origin === 'subagent') continue;
         if (archived.has(id)) continue;
 
@@ -667,7 +673,6 @@ window.__ModuleLoader__.load({
         const row = byId[pinnedId];
         if (row === undefined || row === null) continue;
         if (row.blank === true) continue;
-        if (row.parentId !== undefined && row.parentId !== null) continue;
         if (row.origin === 'subagent') continue;
         if (archived.has(pinnedId)) continue;
         const view = projections[pinnedId]?.values?.activeSessions;
@@ -705,7 +710,6 @@ window.__ModuleLoader__.load({
         const row = byId[id];
         if (row === undefined || row === null) continue;
         if (row.blank === true) continue;
-        if (row.parentId !== undefined && row.parentId !== null) continue;
         if (row.origin === 'subagent') continue;
         if (archived.has(id)) continue;
         if (Number(snooze[id] ?? 0) > now) continue;

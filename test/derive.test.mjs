@@ -128,12 +128,12 @@ test('workspaceGroupKeyOf names the browser group a Session is listed under', ()
   assert.equal(workspaceGroupKeyOf(undefined, 's1'), '');
 });
 
-test('excludes blank, subagent, child and archived sessions', () => {
+test('excludes blank, subagent and archived sessions', () => {
   const rows = deriveActiveRows({
     list: listState([
       { session: summary('blank-one', { blank: true }) },
       { session: summary('subagent-one', { origin: 'subagent' }) },
-      { session: summary('child-one', { parentId: 'parent' }) },
+      { session: summary('child-one', { origin: 'subagent', parentId: 'parent' }) },
       { session: summary('archived-one') },
       { session: summary('kept') },
     ]),
@@ -148,6 +148,45 @@ test('excludes blank, subagent, child and archived sessions', () => {
     now: 5000,
   });
   assert.deepEqual(rows.map((row) => row.id), ['kept']);
+});
+
+test('a fork that still records its source in parentId is a Session of its own', () => {
+  /* Older Hosts wrote the Session a fork branched from into `parentId`; newer
+     ones omit the field entirely. Either way a fork is top-level work, not
+     delegated work: it gets its own row and never keeps the Session it
+     branched from live. */
+  const rows = deriveActiveRows({
+    list: listState([
+      { session: summary('source', { updatedAt: 4000 }), projection: finished(3) },
+      { session: summary('fork', { updatedAt: 5000, parentId: 'source' }) },
+    ]),
+    statuses: statusMap([
+      { session: { id: 'source' }, status: { running: false, completionUnread: true } },
+      { session: { id: 'fork' }, status: { running: true } },
+    ]),
+    workspaces: { items: [] },
+    now: 5000,
+  });
+  assert.deepEqual(rows.map((row) => [row.id, row.kind]), [
+    ['fork', 'running'],
+    ['source', 'done'],
+  ]);
+  /* No ⚙ N on either row, and the source's finished turn is not held open. */
+  assert.equal(rows[0].subagents, 0);
+  assert.equal(rows[1].subagents, 0);
+  assert.equal(rows[1].waitingOnTasks, false);
+});
+
+test('a fork waiting on the user is listed instead of vanishing', () => {
+  const rows = deriveActiveRows({
+    list: listState([{ session: summary('fork', { parentId: 'source' }) }]),
+    statuses: statusMap([
+      { session: { id: 'fork' }, status: { running: true, pendingInteraction: { kind: 'approval' } } },
+    ]),
+    workspaces: { items: [] },
+    now: 5000,
+  });
+  assert.deepEqual(rows.map((row) => [row.id, row.kind]), [['fork', 'waiting']]);
 });
 
 test('orders waiting → running → failed → done, newest first inside a bucket', () => {
@@ -264,7 +303,7 @@ test('a row kept live by subagents is not ackable: the Session is still busy', (
   const rows = deriveActiveRows({
     list: listState([
       { session: summary('parent', { updatedAt: 4000 }), projection: finished(3) },
-      { session: summary('child', { parentId: 'parent' }) },
+      { session: summary('child', { origin: 'subagent', parentId: 'parent' }) },
     ]),
     statuses: statusMap([
       { session: { id: 'parent' }, status: { running: false, completionUnread: true } },
@@ -339,7 +378,7 @@ test('a job in an inherited prefix belongs to the source Session, not the fork',
 test('a child kept live by its background job keeps the parent running', () => {
   const list = listState([
     { session: summary('parent', { updatedAt: 4000 }), projection: finished(3) },
-    { session: summary('child', { parentId: 'parent' }), projection: { ...finished(7), jobs: [{ id: 'job-c', owner: 'child', startedAt: 1 }] } },
+    { session: summary('child', { origin: 'subagent', parentId: 'parent' }), projection: { ...finished(7), jobs: [{ id: 'job-c', owner: 'child', startedAt: 1 }] } },
   ]);
   const rows = deriveActiveRows({
     list,
@@ -441,9 +480,9 @@ test('counts running direct subagents on the parent row', () => {
   const rows = deriveActiveRows({
     list: listState([
       { session: summary('parent') },
-      { session: summary('child-a', { parentId: 'parent' }) },
-      { session: summary('child-b', { parentId: 'parent' }) },
-      { session: summary('child-done', { parentId: 'parent' }) },
+      { session: summary('child-a', { origin: 'subagent', parentId: 'parent' }) },
+      { session: summary('child-b', { origin: 'subagent', parentId: 'parent' }) },
+      { session: summary('child-done', { origin: 'subagent', parentId: 'parent' }) },
     ]),
     statuses: statusMap([
       { session: { id: 'parent' }, status: { running: true } },
@@ -463,7 +502,7 @@ test('a parent waiting on a running subagent is live, not finished', () => {
      says "done" while the delegated work is still running. */
   const list = listState([
     { session: summary('parent', { updatedAt: 4000 }), projection: finished(3) },
-    { session: summary('child', { parentId: 'parent', updatedAt: 4000 }) },
+    { session: summary('child', { origin: 'subagent', parentId: 'parent', updatedAt: 4000 }) },
   ]);
   const running = statusMap([
     { session: { id: 'parent' }, status: { running: false, completionUnread: true } },
@@ -498,8 +537,8 @@ test('a nested subagent keeps every ancestor live', () => {
   const rows = deriveActiveRows({
     list: listState([
       { session: summary('root', { updatedAt: 4000 }), projection: finished(3) },
-      { session: summary('child', { parentId: 'root' }) },
-      { session: summary('grandchild', { parentId: 'child' }) },
+      { session: summary('child', { origin: 'subagent', parentId: 'root' }) },
+      { session: summary('grandchild', { origin: 'subagent', parentId: 'child' }) },
     ]),
     statuses: statusMap([
       { session: { id: 'root' }, status: { running: false, completionUnread: true } },
@@ -520,7 +559,7 @@ test('a live subagent outranks the stale-turn bound and the snooze window', () =
   const rows = deriveActiveRows({
     list: listState([
       { session: summary('parent', { updatedAt: 1_000_000 }), projection: RUNNING_TURN(9) },
-      { session: summary('child', { parentId: 'parent' }) },
+      { session: summary('child', { origin: 'subagent', parentId: 'parent' }) },
     ]),
     statuses: statusMap([
       { session: { id: 'parent' }, status: { running: false } },
@@ -537,7 +576,7 @@ test('a running child with no status yet falls back to its list row', () => {
   const rows = deriveActiveRows({
     list: listState([
       { session: summary('parent', { updatedAt: 4000 }), projection: finished(3) },
-      { session: summary('child', { parentId: 'parent', running: true }) },
+      { session: summary('child', { origin: 'subagent', parentId: 'parent', running: true }) },
     ]),
     statuses: statusMap([
       { session: { id: 'parent' }, status: { running: false, completionUnread: true } },
@@ -556,7 +595,7 @@ test('a running subagent outranks the previous turn failure', () => {
   const rows = deriveActiveRows({
     list: listState([
       { session: summary('parent', { updatedAt: 4000 }), projection: finished(3, 'failed', 'boom') },
-      { session: summary('child', { parentId: 'parent' }) },
+      { session: summary('child', { origin: 'subagent', parentId: 'parent' }) },
     ]),
     statuses: statusMap([
       { session: { id: 'parent' }, status: { running: false, completionUnread: true } },
@@ -955,7 +994,7 @@ test('resident rows skip every unlistable Session, but never the open one', () =
     list: listState([
       { session: summary('open') },
       { session: summary('archived') },
-      { session: summary('child', { parentId: 'parent' }) },
+      { session: summary('child', { origin: 'subagent', parentId: 'parent' }) },
       { session: summary('sub', { origin: 'subagent' }) },
       { session: summary('blank', { blank: true }) },
       { session: summary('kept') },
@@ -1016,7 +1055,7 @@ test('recency shortcuts skip archived, blank, sub-agent and snoozed Sessions', (
       { session: summary('a', { updatedAt: 900 }) },
       { session: summary('arch', { updatedAt: 800 }) },
       { session: summary('blank', { updatedAt: 700, blank: true }) },
-      { session: summary('child', { updatedAt: 600, parentId: 'a' }) },
+      { session: summary('child', { updatedAt: 600, origin: 'subagent', parentId: 'a' }) },
       { session: summary('sub', { updatedAt: 500, origin: 'subagent' }) },
       { session: summary('snoozed', { updatedAt: 400 }) },
     ]),
