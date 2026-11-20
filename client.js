@@ -1445,18 +1445,13 @@ window.__ModuleLoader__.load({
       'background:var(--dsw-alias-bg-skeleton,rgba(128,128,128,.12));color:var(--dsw-alias-label-secondary,rgba(128,128,128,.95))}',
       '@keyframes dshAsPulse{0%,100%{opacity:1}50%{opacity:.3}}',
       '@media (prefers-reduced-motion: reduce){.dsh-as-dot[data-kind="running"]{animation:none}}',
-      /* Conversation title: a location label next to the Session title. It
-         reads as a breadcrumb tinted like the crumb buttons, not as another
-         primary action competing with the header's own utilities. */
-      '.dsh-as-ws{display:inline-flex;align-items:center;gap:5px;max-width:188px;height:24px;padding:0 7px;',
-      'border:1px solid transparent;border-radius:var(--dsw-radius-md,8px);background:transparent;',
-      'color:var(--dsw-alias-label-tertiary,rgba(128,128,128,.85));cursor:pointer;flex:none;font-family:inherit;',
-      'font-size:12px;line-height:18px;user-select:none}',
-      '.dsh-as-ws:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.12));',
-      'color:var(--dsw-alias-label-primary,inherit)}',
-      '.dsh-as-ws:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid ',
-      'var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,#247bbf));outline-offset:-2px}',
-      '.dsh-as-ws svg{flex:none;width:14px;height:14px}',
+      /* Conversation title: the workspace name sits beside the Session title
+         as a plain meta label — the same weight, size and tint as the header's
+         own mode / jobs labels, never a boxed or hoverable control. */
+      '.dsh-as-ws{display:inline-flex;align-items:center;gap:4px;max-width:196px;padding:0 2px 0 0;',
+      'color:var(--dsw-alias-label-tertiary,rgba(128,128,128,.85));flex:none;font-family:inherit;',
+      'font-size:12px;line-height:22px;user-select:none;cursor:default}',
+      '.dsh-as-ws svg{flex:none;width:14px;height:14px;opacity:.7}',
       '.dsh-as-ws-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       '@media (max-width:900px){.dsh-as-ws{max-width:132px}}',
       '@media (max-width:640px){.dsh-as-ws{display:none}}',
@@ -1686,8 +1681,9 @@ window.__ModuleLoader__.load({
          * The Session title itself belongs to the conversation plugin (it owns
          * the breadcrumb and the subagent lineage slot), so this joins the
          * header's additive actions list instead of shadowing that single slot.
-         * It sits immediately after the title; its click — and a click on the
-         * title segment itself — reveals the Session's row in the sidebar.
+         * The label is pure meta text — same treatment as the mode and jobs
+         * labels beside it — and clicking the Session title segment reveals the
+         * Session's row in the sidebar.
          * Subagent titles resolve through the parent chain to the row the
          * workspace list can actually show.
          */
@@ -1716,12 +1712,6 @@ window.__ModuleLoader__.load({
             if (target === '') return;
             revealSessionInSidebar(target, current.items, layoutOf());
           }, []);
-
-          const onTagClick = useCallback((event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            locate();
-          }, [locate]);
 
           useEffect(() => {
             if (!present) return undefined;
@@ -1752,14 +1742,11 @@ window.__ModuleLoader__.load({
           const caption = `${copy('workspaceLabel', { name: label })} · ${hint}`;
           const path = owner?.workspace?.path;
           const tooltip = typeof path === 'string' && path !== '' ? `${caption} · ${path}` : caption;
-          return h('button', {
+          return h('span', {
             ref: rootRef,
-            type: 'button',
             className: 'dsh-as-ws',
             'data-dsh-as-ws-tag': '',
             title: tooltip,
-            'aria-label': caption,
-            onClick: onTagClick,
           },
           h(WorkspaceGlyph),
           h('span', { className: 'dsh-as-ws-name' }, label));
