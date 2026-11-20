@@ -184,6 +184,10 @@ window.__ModuleLoader__.load({
         ackAll: '全部已读',
         snoozeAll: '忽略全部 1 小时',
         subagents: '含 {count} 个运行中子任务',
+        workspaceLabel: '工作区：{name}',
+        ungrouped: '未分组',
+        locateSession: '在工作区中定位会话',
+        locateOwning: '在工作区中定位所属会话',
         empty: '暂无活跃会话',
         justNow: '刚刚',
         minutesAgo: '{count} 分钟前',
@@ -227,6 +231,10 @@ window.__ModuleLoader__.load({
         ackAll: 'Mark all as read',
         snoozeAll: 'Snooze all 1 hour',
         subagents: '{count} running subagent(s)',
+        workspaceLabel: 'Workspace: {name}',
+        ungrouped: 'Ungrouped',
+        locateSession: 'Locate in the sidebar',
+        locateOwning: 'Locate the owning session',
         empty: 'No active sessions',
         justNow: 'just now',
         minutesAgo: '{count}m ago',
@@ -307,6 +315,31 @@ window.__ModuleLoader__.load({
         }
       }
       return '';
+    }
+
+    /**
+     * Workspace that owns a Session. Subagent Sessions are not Workspace
+     * members; their containing Session is the row the sidebar can show, so
+     * walk the durable parent chain until a listed member turns up.
+     * @param items - WorkspaceSnapshot.items.
+     * @param byId - SessionListState.byId (optional; older Hosts list them anyway).
+     * @param sessionId - Session to resolve.
+     * @returns `{ workspace, ownerId }`, or null when no ancestor is a member.
+     */
+    function sessionOwnerOf(items, byId, sessionId) {
+      if (typeof sessionId !== 'string' || sessionId === '') return null;
+      const list = Array.isArray(items) ? items : [];
+      const seen = new Set();
+      let id = sessionId;
+      while (id !== undefined && id !== null && id !== '' && !seen.has(id)) {
+        seen.add(id);
+        const workspace = list.find((item) => (
+          Array.isArray(item?.sessionIds) && item.sessionIds.includes(id)
+        ));
+        if (workspace !== undefined) return { workspace, ownerId: id };
+        id = byId?.[id]?.parentId;
+      }
+      return null;
     }
 
     /**
@@ -884,6 +917,10 @@ window.__ModuleLoader__.load({
        and collapsing it there would just hide the sidebar for no reason. */
     const SIDEBAR_AUTO_COLLAPSE = 1024;
 
+    /* A double click lands two title clicks within a few frames; without this
+       the second one would toggle the drawer that the first one just opened. */
+    let lastDrawerRequestAt = 0;
+
     /** @returns whether the sidebar currently floats over the conversation. */
     function sidebarOverlays() {
       try {
@@ -924,39 +961,138 @@ window.__ModuleLoader__.load({
       return null;
     }
 
+    /** @returns whether the element paints inside the viewport's horizontal band. */
+    function elementOnScreen(node) {
+      try {
+        if (node === null || node.getClientRects().length === 0) return false;
+        const rect = node.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 && rect.right > 0 && rect.left < window.innerWidth;
+      } catch {
+        return false;
+      }
+    }
+
+    /**
+     * @returns whether the sidebar hides the workspace list right now: the
+     *   desktop rail is collapsed, or the phone drawer is parked off-screen.
+     *   The anchor block the group mounts into is the cheapest witness — the
+     *   list renders nothing else this plugin can identify by attribute.
+     */
+    function sidebarCollapsed() {
+      try {
+        const host = document.querySelector(`[${HOST_ATTRIBUTE}]`);
+        const column = host === null ? null : host.closest('[class*="sidebarCol"]');
+        if (column !== null) {
+          if (!elementOnScreen(column)) return true;
+          return column.getBoundingClientRect().width < 160;
+        }
+        for (const node of document.querySelectorAll('[data-row-key]')) {
+          if (elementOnScreen(node)) return false;
+        }
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
+    /** Brief ring drawn around the row a reveal just landed on. */
+    const LOCATE_CLASS = 'dsh-as-locate';
+    const LOCATE_HOLD_MS = 1500;
+
+    /** One pending clear per flashed row, so repeated reveals restart it. */
+    const locatedRows = new WeakMap();
+
+    /**
+     * Flash a row so a successful jump reads as "this one", not as an ordinary
+     * scroll. The timer is per element; a row that unmounts with a pending
+     * timer is collected with the WeakMap entry.
+     * @param row - host row element.
+     */
+    function flashLocatedRow(row) {
+      try {
+        const prior = locatedRows.get(row);
+        if (prior !== undefined) window.clearTimeout(prior);
+        row.classList.remove(LOCATE_CLASS);
+        /* Restart the keyframes when the same row is targeted twice. */
+        void row.offsetWidth;
+        row.classList.add(LOCATE_CLASS);
+        locatedRows.set(row, window.setTimeout(() => {
+          locatedRows.delete(row);
+          row.classList.remove(LOCATE_CLASS);
+        }, LOCATE_HOLD_MS));
+      } catch {
+        /* a row detached mid-flight must not break the reveal that found it */
+      }
+    }
+
     /**
      * Bring one Session's row in the workspace list into view after the active
      * list opens it: expand the owning Workspace group when it is folded, click
      * through the row watermark ("Show more") until the row is rendered, then
-     * scroll it into view. DSH keeps its own search reveal (the internal
-     * `revealSessionId` state) private, so this drives the same DOM affordances
-     * the list already exposes to the user. No-op when the sidebar is not
-     * mounted (rail or phone drawer), the Session is archived, or the list is
-     * in flat mode — there is no group to expand there.
+     * scroll it into view and flash it once. DSH keeps its own search reveal
+     * (the internal `revealSessionId` state) private, so this drives the same
+     * DOM affordances the list already exposes to the user.
+     *
+     * On a phone the list is not mounted until the sidebar drawer opens, and on
+     * the desktop the rail hides it until the sidebar expands; the first miss
+     * asks the layout service for the sidebar, then polls a few frames for the
+     * list to arrive. A sidebar that already shows the list is left alone.
      * @param sessionId - Session to reveal.
      * @param items - Workspace views (`workspaces.items`) naming the owner.
+     * @param layout - Host layout service, for opening a collapsed sidebar.
      */
-    function revealSessionInSidebar(sessionId, items) {
+    function revealSessionInSidebar(sessionId, items, layout) {
       try {
         const shown = rowByKey(`session:${sessionId}`);
-        if (shown !== null) {
+        if (shown !== null && elementOnScreen(shown)) {
           shown.scrollIntoView({ block: 'nearest' });
+          flashLocatedRow(shown);
           return;
         }
         const key = workspaceGroupKeyOf(items, sessionId);
-        if (rowByKey(`workspace:${key}`) === null) return;
+        let drawerPending = false;
+        /** Ask the layout owner for the sidebar at most once. */
+        const requestDrawer = () => {
+          if (drawerPending) return true;
+          if (!sidebarCollapsed()) return false;
+          const now = Date.now();
+          if (now - lastDrawerRequestAt < 1000) return true;
+          if (typeof layout?.toggleSidebar !== 'function') return false;
+          try {
+            layout.toggleSidebar();
+            drawerPending = true;
+            lastDrawerRequestAt = now;
+            return true;
+          } catch (error) {
+            log('opening the sidebar for the Session reveal failed', error);
+            return false;
+          }
+        };
         let attempts = 0;
         const step = () => {
           const found = rowByKey(`session:${sessionId}`);
-          if (found !== null) {
+          if (found !== null && elementOnScreen(found)) {
             found.scrollIntoView({ block: 'nearest' });
+            flashLocatedRow(found);
             return;
           }
-          if (attempts >= 40) return;
-          attempts += 1;
+          if (attempts >= 40) {
+            const group = rowByKey(`workspace:${key}`);
+            if (group !== null && elementOnScreen(group)) {
+              group.scrollIntoView({ block: 'nearest' });
+              flashLocatedRow(group);
+            }
+            return;
+          }
           const header = rowByKey(`workspace:${key}`);
-          if (header === null) return;
+          if (header === null || !elementOnScreen(header)) {
+            if (!requestDrawer()) return;
+            attempts += 1;
+            window.requestAnimationFrame(step);
+            return;
+          }
           if (header.getAttribute('aria-expanded') === 'false') {
+            attempts += 1;
             header.click();
             window.requestAnimationFrame(step);
             return;
@@ -965,9 +1101,18 @@ window.__ModuleLoader__.load({
              "Show more" raises it; the button would collapse the overflow
              again once everything is shown, so never click it in that state. */
           const more = rowByKey(`overflow:${key}`);
-          if (more === null || more.getAttribute('aria-expanded') === 'true') return;
-          more.click();
-          window.requestAnimationFrame(step);
+          if (more !== null && more.getAttribute('aria-expanded') !== 'true') {
+            attempts += 1;
+            more.click();
+            window.requestAnimationFrame(step);
+            return;
+          }
+          /* The Session itself is unreachable (archived, or the list is flat):
+             land on the owning Workspace so the click still moves the eye. */
+          if (elementOnScreen(header)) {
+            header.scrollIntoView({ block: 'nearest' });
+            flashLocatedRow(header);
+          }
         };
         step();
       } catch (error) {
@@ -1300,6 +1445,33 @@ window.__ModuleLoader__.load({
       'background:var(--dsw-alias-bg-skeleton,rgba(128,128,128,.12));color:var(--dsw-alias-label-secondary,rgba(128,128,128,.95))}',
       '@keyframes dshAsPulse{0%,100%{opacity:1}50%{opacity:.3}}',
       '@media (prefers-reduced-motion: reduce){.dsh-as-dot[data-kind="running"]{animation:none}}',
+      /* Conversation title: a location label next to the Session title. It
+         reads as a breadcrumb tinted like the crumb buttons, not as another
+         primary action competing with the header's own utilities. */
+      '.dsh-as-ws{display:inline-flex;align-items:center;gap:5px;max-width:188px;height:24px;padding:0 7px;',
+      'border:1px solid transparent;border-radius:var(--dsw-radius-md,8px);background:transparent;',
+      'color:var(--dsw-alias-label-tertiary,rgba(128,128,128,.85));cursor:pointer;flex:none;font-family:inherit;',
+      'font-size:12px;line-height:18px;user-select:none}',
+      '.dsh-as-ws:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.12));',
+      'color:var(--dsw-alias-label-primary,inherit)}',
+      '.dsh-as-ws:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid ',
+      'var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,#247bbf));outline-offset:-2px}',
+      '.dsh-as-ws svg{flex:none;width:14px;height:14px}',
+      '.dsh-as-ws-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '@media (max-width:900px){.dsh-as-ws{max-width:132px}}',
+      '@media (max-width:640px){.dsh-as-ws{display:none}}',
+      /* The title segment itself is a click target now: show the pointer, but
+         only where this plugin actually rendered its tag into the header. */
+      'header:has([data-dsh-as-ws-tag]) [class*="titleCluster"] nav>:last-child{cursor:pointer}',
+      'header:has([data-dsh-as-ws-tag]) [class*="titleCluster"] nav>:last-child [class*="crumbCurrent"]{cursor:pointer}',
+      /* One calm ring on the row the jump landed on: visible enough to answer
+         "where did it go?", gone before it becomes decoration. */
+      '@keyframes dshAsLocate{0%{box-shadow:inset 0 0 0 1.5px ',
+      'color-mix(in srgb,var(--dsw-alias-state-business-primary,#247bbf) 85%,transparent)}',
+      '100%{box-shadow:inset 0 0 0 1.5px transparent}}',
+      '.dsh-as-locate{animation:dshAsLocate 1.4s ease-out 1}',
+      '@media (prefers-reduced-motion: reduce){.dsh-as-locate{animation:none;',
+      'box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--dsw-alias-state-business-primary,#247bbf) 65%,transparent)}}',
       // Inert opener: 1x1, off the flow, never hit by a finger. It exists only
       // so a drawer takeover can find the host contract it clicks.
       '.dsh-as-opener{position:fixed;left:0;top:0;width:1px;height:1px;padding:0;border:0;',
@@ -1366,6 +1538,23 @@ window.__ModuleLoader__.load({
         focusable: 'false',
       },
       h('path', { d: 'M6.1 4.2 10 8l-3.9 3.8' }));
+    }
+
+    /** Folder outline in front of the workspace name, matching the sidebar. */
+    function WorkspaceGlyph() {
+      return h('svg', {
+        width: 14,
+        height: 14,
+        viewBox: '0 0 16 16',
+        fill: 'none',
+        stroke: 'currentColor',
+        strokeWidth: 1.2,
+        strokeLinecap: 'round',
+        strokeLinejoin: 'round',
+        'aria-hidden': 'true',
+        focusable: 'false',
+      },
+      h('path', { d: 'M2.3 4.7c0-.7.6-1.3 1.3-1.3h2.5l1.4 1.5h5.2c.7 0 1.3.6 1.3 1.3v5.8c0 .7-.6 1.3-1.3 1.3H3.6c-.7 0-1.3-.6-1.3-1.3V4.7Z' }));
     }
 
     /** One hover action button. */
@@ -1490,6 +1679,91 @@ window.__ModuleLoader__.load({
           question: 'waitingQuestion',
           'plan-review': 'waitingPlan',
         };
+
+        /**
+         * Workspace label in the conversation title row.
+         *
+         * The Session title itself belongs to the conversation plugin (it owns
+         * the breadcrumb and the subagent lineage slot), so this joins the
+         * header's additive actions list instead of shadowing that single slot.
+         * It sits immediately after the title; its click — and a click on the
+         * title segment itself — reveals the Session's row in the sidebar.
+         * Subagent titles resolve through the parent chain to the row the
+         * workspace list can actually show.
+         */
+        function ConversationWorkspaceTag(props) {
+          const sessionId = typeof props.sessionId === 'string' ? props.sessionId : '';
+          const useWorkspacesHook = typeof props.useWorkspaces === 'function' ? props.useWorkspaces : NO_HOOK;
+          const useSessionsHook = typeof props.useSessions === 'function' ? props.useSessions : NO_HOOK;
+          const items = useWorkspacesHook((state) => state.items);
+          const workspacePhase = useWorkspacesHook((state) => state.phase);
+          const byId = useSessionsHook((state) => state.byId);
+          const owner = useMemo(() => sessionOwnerOf(items, byId, sessionId), [items, byId, sessionId]);
+          const known = byId?.[sessionId] !== undefined;
+          const latest = useRef(null);
+          latest.current = { owner, items, sessionId };
+          const workspaceTitle = owner?.workspace?.title;
+          const label = owner === null
+            ? (workspacePhase === 'ready' && known ? copy('ungrouped') : '')
+            : (typeof workspaceTitle === 'string' && workspaceTitle !== '' ? workspaceTitle : copy('ungrouped'));
+          const present = label !== '';
+          const rootRef = useRef(null);
+
+          const locate = useCallback(() => {
+            const current = latest.current;
+            if (current === null) return;
+            const target = current.owner?.ownerId ?? current.sessionId;
+            if (target === '') return;
+            revealSessionInSidebar(target, current.items, layoutOf());
+          }, []);
+
+          const onTagClick = useCallback((event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            locate();
+          }, [locate]);
+
+          useEffect(() => {
+            if (!present) return undefined;
+            /* The title segment is re-rendered by the conversation plugin on
+               navigation, so delegate from the document and resolve the live
+               segment at click time instead of binding to one element. */
+            const onClick = (event) => {
+              if (event.button !== 0 || event.defaultPrevented) return;
+              const root = rootRef.current;
+              const header = root?.closest('header') ?? null;
+              if (header === null) return;
+              const nav = header.querySelector('[class*="titleCluster"] nav');
+              const segment = nav?.lastElementChild ?? null;
+              if (segment === null || !segment.contains(event.target)) return;
+              const target = event.target;
+              if (target instanceof Element
+                && target.closest('button, a, input, textarea, select, [role="button"], [role="menuitem"], [role="checkbox"], [role="switch"]') !== null) return;
+              const selection = window.getSelection();
+              if (selection !== null && selection.isCollapsed === false) return;
+              locate();
+            };
+            document.addEventListener('click', onClick);
+            return () => document.removeEventListener('click', onClick);
+          }, [present, locate]);
+
+          if (!present) return null;
+          const hint = copy(owner !== null && owner.ownerId !== sessionId ? 'locateOwning' : 'locateSession');
+          const caption = `${copy('workspaceLabel', { name: label })} · ${hint}`;
+          const path = owner?.workspace?.path;
+          const tooltip = typeof path === 'string' && path !== '' ? `${caption} · ${path}` : caption;
+          return h('button', {
+            ref: rootRef,
+            type: 'button',
+            className: 'dsh-as-ws',
+            'data-dsh-as-ws-tag': '',
+            title: tooltip,
+            'aria-label': caption,
+            onClick: onTagClick,
+          },
+          h(WorkspaceGlyph),
+          h('span', { className: 'dsh-as-ws-name' }, label));
+        }
 
         const PANEL_ID = 'active-sessions';
         let fallbackRegistered = false;
@@ -1830,7 +2104,7 @@ window.__ModuleLoader__.load({
                 log('collapsing the sidebar overlay failed', error);
               }
             } else {
-              revealSessionInSidebar(row.id, workspaces?.items);
+              revealSessionInSidebar(row.id, workspaces?.items, layoutOf());
             }
             acknowledgeRow(row);
           }, [acknowledgeRow, workspaces]);
@@ -2250,6 +2524,16 @@ window.__ModuleLoader__.load({
           id: 'active-sessions',
           order: 100,
         }, ActiveSessionsOverlayEntry));
+
+        /* The title row's action list is additive: this never replaces the
+           Session title or the built-in subagent lineage entry. Order -30 puts
+           the workspace label before the other header actions (agent preset at
+           -10, subagent catalog and jobs later). */
+        ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({
+          name: 'conversation.session.header.actions',
+          id: 'workspace-tag',
+          order: -30,
+        }, ConversationWorkspaceTag));
 
         return async () => {
           try {

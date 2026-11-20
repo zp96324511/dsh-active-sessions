@@ -25,6 +25,7 @@ function loadPure() {
   const body = CLIENT_SOURCE.slice(start, end);
   const factory = new Function(`${body}
     return { KIND_RANK, EMPTY_STATUS, readStatus, buildSessionWorkspaceIndex, workspaceGroupKeyOf,
+             sessionOwnerOf,
              relativeTimeKey, deriveActiveRows, rowToAcknowledgeInView, STORAGE_KEY, readPrefs,
              draftSnippetOf, collectDrafts, sameDrafts, DRAFT_KEY_PREFIX, currentSessionIdOf,
              mainPanelActiveOf, updateNoteOf };`);
@@ -34,7 +35,7 @@ function loadPure() {
 const pure = loadPure();
 const {
   deriveActiveRows, rowToAcknowledgeInView, relativeTimeKey, buildSessionWorkspaceIndex,
-  workspaceGroupKeyOf, KIND_RANK,
+  workspaceGroupKeyOf, sessionOwnerOf, KIND_RANK,
   draftSnippetOf, collectDrafts, sameDrafts, DRAFT_KEY_PREFIX, currentSessionIdOf,
   mainPanelActiveOf,
   updateNoteOf,
@@ -126,6 +127,34 @@ test('workspaceGroupKeyOf names the browser group a Session is listed under', ()
   /* A Session no Workspace accounts for lives in Ungrouped, key "". */
   assert.equal(workspaceGroupKeyOf(items, 'other'), '');
   assert.equal(workspaceGroupKeyOf(undefined, 's1'), '');
+});
+
+test('sessionOwnerOf resolves the listed row behind a subagent Session', () => {
+  const items = [
+    { workspaceId: 'w1', title: 'alpha', sessionIds: ['root', 'sibling'] },
+    { workspaceId: 'w2', title: 'beta', sessionIds: ['other'] },
+  ];
+  const byId = {
+    root: { id: 'root' },
+    child: { id: 'child', parentId: 'root' },
+    grand: { id: 'grand', parentId: 'child' },
+    stray: { id: 'stray' },
+    loopA: { id: 'loopA', parentId: 'loopB' },
+    loopB: { id: 'loopB', parentId: 'loopA' },
+  };
+  const owner = sessionOwnerOf(items, byId, 'grand');
+  assert.equal(owner.ownerId, 'root');
+  assert.equal(owner.workspace.title, 'alpha');
+  assert.equal(sessionOwnerOf(items, byId, 'root').ownerId, 'root');
+  /* A listed member wins over its own parent when both are listed. */
+  assert.equal(sessionOwnerOf(items, byId, 'sibling').ownerId, 'sibling');
+  assert.equal(sessionOwnerOf(items, byId, 'stray'), null);
+  /* A cyclic parent chain terminates instead of spinning. */
+  assert.equal(sessionOwnerOf(items, byId, 'loopA'), null);
+  assert.equal(sessionOwnerOf(items, byId, ''), null);
+  /* Older lists may not expose byId; direct membership still resolves. */
+  assert.equal(sessionOwnerOf(items, undefined, 'other').ownerId, 'other');
+  assert.equal(sessionOwnerOf(undefined, byId, 'root'), null);
 });
 
 test('excludes blank, subagent and archived sessions', () => {

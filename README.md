@@ -81,7 +81,9 @@ The host already persists every composer draft in localStorage under `dsh.conver
 
 The header badge counts only sessions waiting on you. The block is capped at `min(320px, 40vh)` and scrolls internally beyond eight rows.
 
-Opening a row also reveals that session in the workspace list below: a folded Workspace group is expanded, a row past the group's default five-row watermark is rendered by clicking through "Show more", and the row is scrolled into view with `scrollIntoView({ block: 'nearest' })`. This drives the same DOM affordances as DSH's own search-result reveal (its internal `revealSessionId` is not exposed). When the sidebar is a rail, the phone drawer is closed, or the list is in flat mode there is no group to expand, so nothing happens.
+Opening a row also reveals that session in the workspace list below: a folded Workspace group is expanded, a row past the group's default five-row watermark is rendered by clicking through "Show more", and the row is scrolled into view with `scrollIntoView({ block: 'nearest' })`. This drives the same DOM affordances as DSH's own search-result reveal (its internal `revealSessionId` is not exposed). When the sidebar is a collapsed rail or the phone drawer is shut, the list does not exist at all, so the reveal first calls the host's `layout.toggleSidebar()` and polls a few frames for the list to mount; a sidebar that already shows the list is never collapsed. In flat list mode, or for an archived session, there is no group to expand and the reveal only lands on the Workspace group when the list has one.
+
+The conversation header also names the session's workspace: a folder chip to the right of the title, with the full path in its tooltip. Clicking the chip — or the title itself — runs the same reveal and draws a brief ring around the landing row; a subagent session reveals its parent's row. The chip hides below a 640px viewport so it never squeezes the title; title clicks keep working.
 
 ## Mobile
 
