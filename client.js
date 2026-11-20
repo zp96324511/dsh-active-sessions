@@ -186,8 +186,7 @@ window.__ModuleLoader__.load({
         subagents: '含 {count} 个运行中子任务',
         workspaceLabel: '工作区：{name}',
         ungrouped: '未分组',
-        locateSession: '点标题可在左侧工作区列表里定位',
-        locateOwning: '点标题可定位它的父会话行',
+        locateWorkspace: '点这里在左侧列表里定位该工作区',
         empty: '暂无活跃会话',
         justNow: '刚刚',
         minutesAgo: '{count} 分钟前',
@@ -233,8 +232,7 @@ window.__ModuleLoader__.load({
         subagents: '{count} running subagent(s)',
         workspaceLabel: 'Workspace: {name}',
         ungrouped: 'Ungrouped',
-        locateSession: 'Click the title to locate it in the sidebar',
-        locateOwning: "Click the title to locate its parent's row",
+        locateWorkspace: 'Click to locate this workspace in the sidebar',
         empty: 'No active sessions',
         justNow: 'just now',
         minutesAgo: '{count}m ago',
@@ -1026,6 +1024,31 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Ask the layout owner for the sidebar when the list it holds is hidden:
+     * the desktop rail is collapsed, or the phone drawer is parked off-screen.
+     * At most one request per second, and only while the caller keeps polling.
+     * @param layout - Host layout service, for opening a collapsed sidebar.
+     * @param state - `{ pending }`; set once this reveal already asked.
+     * @returns whether the caller should keep polling for the list.
+     */
+    function requestSidebarOpen(layout, state) {
+      if (state.pending) return true;
+      if (!sidebarCollapsed()) return false;
+      const now = Date.now();
+      if (now - lastDrawerRequestAt < 1000) return true;
+      if (typeof layout?.toggleSidebar !== 'function') return false;
+      try {
+        layout.toggleSidebar();
+        state.pending = true;
+        lastDrawerRequestAt = now;
+        return true;
+      } catch (error) {
+        log('opening the sidebar for a reveal failed', error);
+        return false;
+      }
+    }
+
+    /**
      * Bring one Session's row in the workspace list into view after the active
      * list opens it: expand the owning Workspace group when it is folded, click
      * through the row watermark ("Show more") until the row is rendered, then
@@ -1050,24 +1073,7 @@ window.__ModuleLoader__.load({
           return;
         }
         const key = workspaceGroupKeyOf(items, sessionId);
-        let drawerPending = false;
-        /** Ask the layout owner for the sidebar at most once. */
-        const requestDrawer = () => {
-          if (drawerPending) return true;
-          if (!sidebarCollapsed()) return false;
-          const now = Date.now();
-          if (now - lastDrawerRequestAt < 1000) return true;
-          if (typeof layout?.toggleSidebar !== 'function') return false;
-          try {
-            layout.toggleSidebar();
-            drawerPending = true;
-            lastDrawerRequestAt = now;
-            return true;
-          } catch (error) {
-            log('opening the sidebar for the Session reveal failed', error);
-            return false;
-          }
-        };
+        const drawer = { pending: false };
         let attempts = 0;
         const step = () => {
           const found = rowByKey(`session:${sessionId}`);
@@ -1086,7 +1092,7 @@ window.__ModuleLoader__.load({
           }
           const header = rowByKey(`workspace:${key}`);
           if (header === null || !elementOnScreen(header)) {
-            if (!requestDrawer()) return;
+            if (!requestSidebarOpen(layout, drawer)) return;
             attempts += 1;
             window.requestAnimationFrame(step);
             return;
@@ -1117,6 +1123,54 @@ window.__ModuleLoader__.load({
         step();
       } catch (error) {
         log('revealing the Session in the workspace list failed', error);
+      }
+    }
+
+    /**
+     * Bring one Workspace group's header into view in the sidebar list and open
+     * it, so the conversation header can point at the group itself rather than
+     * at one row inside it.
+     *
+     * Same shape as the Session reveal — ask for the sidebar when the list is
+     * hidden, poll a few frames for the row to arrive, then scroll and flash —
+     * but it stops at the group: a folded group is expanded so its Sessions
+     * come into view with it.
+     * @param workspaceId - Workspace id, or the empty string for Ungrouped.
+     * @param layout - Host layout service, for opening a collapsed sidebar.
+     */
+    function revealWorkspaceInSidebar(workspaceId, layout) {
+      try {
+        const key = `workspace:${workspaceId}`;
+        const shown = rowByKey(key);
+        if (shown !== null && elementOnScreen(shown)) {
+          if (shown.getAttribute('aria-expanded') === 'false') shown.click();
+          shown.scrollIntoView({ block: 'nearest' });
+          flashLocatedRow(shown);
+          return;
+        }
+        const drawer = { pending: false };
+        let attempts = 0;
+        const step = () => {
+          const header = rowByKey(key);
+          if (header !== null && elementOnScreen(header)) {
+            if (header.getAttribute('aria-expanded') === 'false') {
+              attempts += 1;
+              header.click();
+              window.requestAnimationFrame(step);
+              return;
+            }
+            header.scrollIntoView({ block: 'nearest' });
+            flashLocatedRow(header);
+            return;
+          }
+          if (attempts >= 40) return;
+          if (!requestSidebarOpen(layout, drawer)) return;
+          attempts += 1;
+          window.requestAnimationFrame(step);
+        };
+        step();
+      } catch (error) {
+        log('revealing the Workspace in the sidebar list failed', error);
       }
     }
 
@@ -1447,10 +1501,14 @@ window.__ModuleLoader__.load({
       '@media (prefers-reduced-motion: reduce){.dsh-as-dot[data-kind="running"]{animation:none}}',
       /* Conversation title: the workspace name sits beside the Session title
          as a plain meta label — the same weight, size and tint as the header's
-         own mode / jobs labels, never a boxed or hoverable control. */
+         own mode / jobs labels, never a boxed control. It is clickable, so it
+         answers with a pointer and a slightly stronger tint, nothing more. */
       '.dsh-as-ws{display:inline-flex;align-items:center;gap:4px;max-width:196px;padding:0 2px 0 0;',
       'color:var(--dsw-alias-label-tertiary,rgba(128,128,128,.85));flex:none;font-family:inherit;',
-      'font-size:12px;line-height:22px;user-select:none;cursor:default}',
+      'font-size:12px;line-height:22px;user-select:none;cursor:pointer}',
+      '.dsh-as-ws:hover{color:var(--dsw-alias-label-secondary,rgba(110,115,122,.95))}',
+      '.dsh-as-ws:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid ',
+      'var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,#247bbf));outline-offset:1px}',
       '.dsh-as-ws svg{flex:none;width:14px;height:14px;opacity:.7}',
       '.dsh-as-ws-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       '@media (max-width:900px){.dsh-as-ws{max-width:132px}}',
@@ -1681,9 +1739,10 @@ window.__ModuleLoader__.load({
          * The Session title itself belongs to the conversation plugin (it owns
          * the breadcrumb and the subagent lineage slot), so this joins the
          * header's additive actions list instead of shadowing that single slot.
-         * The label is pure meta text — same treatment as the mode and jobs
-         * labels beside it — and clicking the Session title segment reveals the
-         * Session's row in the sidebar.
+         * It reads as pure meta text — the same treatment as the mode and jobs
+         * labels beside it, no box, no fill — but it is a control: clicking it
+         * reveals this Workspace's group in the sidebar, while clicking the
+         * Session title reveals the Session's own row.
          * Subagent titles resolve through the parent chain to the row the
          * workspace list can actually show.
          */
@@ -1696,22 +1755,46 @@ window.__ModuleLoader__.load({
           const byId = useSessionsHook((state) => state.byId);
           const owner = useMemo(() => sessionOwnerOf(items, byId, sessionId), [items, byId, sessionId]);
           const known = byId?.[sessionId] !== undefined;
-          const latest = useRef(null);
-          latest.current = { owner, items, sessionId };
           const workspaceTitle = owner?.workspace?.title;
           const label = owner === null
             ? (workspacePhase === 'ready' && known ? copy('ungrouped') : '')
             : (typeof workspaceTitle === 'string' && workspaceTitle !== '' ? workspaceTitle : copy('ungrouped'));
           const present = label !== '';
+          /* `workspace:` row key of the group this label names; the empty
+             string is the host's Ungrouped bucket. */
+          const workspaceKey = owner === null
+            ? (present ? '' : null)
+            : String(owner.workspace?.workspaceId ?? '');
+          const latest = useRef(null);
+          latest.current = { owner, items, sessionId, workspaceKey };
           const rootRef = useRef(null);
 
-          const locate = useCallback(() => {
+          const locateSession = useCallback(() => {
             const current = latest.current;
             if (current === null) return;
             const target = current.owner?.ownerId ?? current.sessionId;
             if (target === '') return;
             revealSessionInSidebar(target, current.items, layoutOf());
           }, []);
+
+          const locateWorkspace = useCallback(() => {
+            const current = latest.current;
+            if (current === null || current.workspaceKey === null) return;
+            revealWorkspaceInSidebar(current.workspaceKey, layoutOf());
+          }, []);
+
+          const onTagClick = useCallback((event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            locateWorkspace();
+          }, [locateWorkspace]);
+
+          const onTagKeyDown = useCallback((event) => {
+            if (event.key !== 'Enter' && event.key !== ' ') return;
+            event.preventDefault();
+            event.stopPropagation();
+            locateWorkspace();
+          }, [locateWorkspace]);
 
           useEffect(() => {
             if (!present) return undefined;
@@ -1731,22 +1814,26 @@ window.__ModuleLoader__.load({
                 && target.closest('button, a, input, textarea, select, [role="button"], [role="menuitem"], [role="checkbox"], [role="switch"]') !== null) return;
               const selection = window.getSelection();
               if (selection !== null && selection.isCollapsed === false) return;
-              locate();
+              locateSession();
             };
             document.addEventListener('click', onClick);
             return () => document.removeEventListener('click', onClick);
-          }, [present, locate]);
+          }, [present, locateSession]);
 
           if (!present) return null;
-          const hint = copy(owner !== null && owner.ownerId !== sessionId ? 'locateOwning' : 'locateSession');
-          const caption = `${copy('workspaceLabel', { name: label })} · ${hint}`;
+          const caption = `${copy('workspaceLabel', { name: label })} · ${copy('locateWorkspace')}`;
           const path = owner?.workspace?.path;
           const tooltip = typeof path === 'string' && path !== '' ? `${caption} · ${path}` : caption;
           return h('span', {
             ref: rootRef,
             className: 'dsh-as-ws',
             'data-dsh-as-ws-tag': '',
+            role: 'button',
+            tabIndex: 0,
             title: tooltip,
+            'aria-label': caption,
+            onClick: onTagClick,
+            onKeyDown: onTagKeyDown,
           },
           h(WorkspaceGlyph),
           h('span', { className: 'dsh-as-ws-name' }, label));
