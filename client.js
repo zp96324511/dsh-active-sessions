@@ -1024,6 +1024,35 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Flash the row behind one `[data-row-key]` and keep the ring on it while
+     * the open settles.
+     *
+     * Opening a Session re-renders the workspace tree, so the element that was
+     * on screen when the click ran can be replaced a frame later — flashing
+     * that node would draw the ring on a detached row and the user would see
+     * nothing. Re-resolving the row by key for a few frames re-applies the ring
+     * to whichever element now carries it, and does nothing once the row is
+     * gone or has slid off screen.
+     * @param key - row key (`session:<id>` or `workspace:<id>`).
+     */
+    function flashRowInList(key) {
+      let frames = 20;
+      const tick = () => {
+        try {
+          const row = rowByKey(key);
+          if (row !== null && elementOnScreen(row) && !row.classList.contains(LOCATE_CLASS)) {
+            flashLocatedRow(row);
+          }
+        } catch {
+          /* a detached row must not break the reveal that found it */
+        }
+        frames -= 1;
+        if (frames > 0) window.requestAnimationFrame(tick);
+      };
+      tick();
+    }
+
+    /**
      * Ask the layout owner for the sidebar when the list it holds is hidden:
      * the desktop rail is collapsed, or the phone drawer is parked off-screen.
      * At most one request per second, and only while the caller keeps polling.
@@ -1069,7 +1098,7 @@ window.__ModuleLoader__.load({
         const shown = rowByKey(`session:${sessionId}`);
         if (shown !== null && elementOnScreen(shown)) {
           shown.scrollIntoView({ block: 'nearest' });
-          flashLocatedRow(shown);
+          flashRowInList(`session:${sessionId}`);
           return;
         }
         const key = workspaceGroupKeyOf(items, sessionId);
@@ -1079,14 +1108,14 @@ window.__ModuleLoader__.load({
           const found = rowByKey(`session:${sessionId}`);
           if (found !== null && elementOnScreen(found)) {
             found.scrollIntoView({ block: 'nearest' });
-            flashLocatedRow(found);
+            flashRowInList(`session:${sessionId}`);
             return;
           }
           if (attempts >= 40) {
             const group = rowByKey(`workspace:${key}`);
             if (group !== null && elementOnScreen(group)) {
               group.scrollIntoView({ block: 'nearest' });
-              flashLocatedRow(group);
+              flashRowInList(`workspace:${key}`);
             }
             return;
           }
@@ -1117,7 +1146,7 @@ window.__ModuleLoader__.load({
              land on the owning Workspace so the click still moves the eye. */
           if (elementOnScreen(header)) {
             header.scrollIntoView({ block: 'nearest' });
-            flashLocatedRow(header);
+            flashRowInList(`workspace:${key}`);
           }
         };
         step();
@@ -1145,7 +1174,7 @@ window.__ModuleLoader__.load({
         if (shown !== null && elementOnScreen(shown)) {
           if (shown.getAttribute('aria-expanded') === 'false') shown.click();
           shown.scrollIntoView({ block: 'nearest' });
-          flashLocatedRow(shown);
+          flashRowInList(key);
           return;
         }
         const drawer = { pending: false };
@@ -1160,7 +1189,7 @@ window.__ModuleLoader__.load({
               return;
             }
             header.scrollIntoView({ block: 'nearest' });
-            flashLocatedRow(header);
+            flashRowInList(key);
             return;
           }
           if (attempts >= 40) return;
@@ -2178,7 +2207,12 @@ window.__ModuleLoader__.load({
                 log('collapsing the sidebar overlay failed', error);
               }
             } else {
-              revealSessionInSidebar(row.id, workspaces?.items, layoutOf());
+              /* Opening the Session re-renders the workspace tree, so reveal on
+                 the next frame: expanding the group, scrolling and ringing the
+                 row should happen on the DOM the user ends up looking at, not
+                 on the nodes this click is about to replace. */
+              const items = workspaces?.items;
+              window.requestAnimationFrame(() => revealSessionInSidebar(row.id, items, layoutOf()));
             }
             acknowledgeRow(row);
           }, [acknowledgeRow, workspaces]);
